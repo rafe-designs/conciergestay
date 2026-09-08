@@ -74,19 +74,11 @@ export async function POST(request: Request) {
       baseRentTotal: parsedBaseRent,
       servicesTotal: parsedServices,
       grandTotal: parsedGrandTotal,
-      apartmentCut: Number(apartmentCut ?? parsedBaseRent),
-      servicesCut: Number(servicesCut ?? parsedServices),
-      platformFee: Number(platformFee ?? 0),
       status: status || 'Confirmed',
       paymentStatus: paymentStatus || 'Paid',
       customerName: resolvedCustomerName || '',
       customerEmail: resolvedCustomerEmail || '',
       phone: resolvedPhone || '',
-      guestCount: resolvedGuestCount,
-      apartmentTitle: apartmentTitle || '',
-      listingId: listingId || '',
-      dailyMealSelections: dailyMealSelections || parsedMeals || [],
-      addons: addons || activeAddons || {},
     };
 
     if (id) bookingData.id = id;
