@@ -357,12 +357,15 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       return;
     }
 
+    // Generate reference with the exact 'CS_' prefix matching your backend expectation
+    const uniqueTxRef = 'CS_' + Math.floor(Math.random() * 1000000000 + 1);
+
     const handler = (window as unknown as { PaystackPop: any }).PaystackPop.setup({
       key: paystackKey,
       email: email,
       amount: totals.totalDue * 100,
       currency: 'NGN',
-      ref: 'VACEUP_' + Math.floor(Math.random() * 1000000000 + 1),
+      ref: uniqueTxRef,
       metadata: {
         custom_fields: [
           { display_name: 'Full Name', variable_name: 'full_name', value: fullName },
@@ -372,8 +375,10 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         ],
       },
       callback: async function (response: { reference: string }) {
+        const finalRef = response.reference || uniqueTxRef;
+
         const payload = {
-          transactionRef: response.reference,
+          transactionRef: finalRef,
           listingId: resolvedParams.id,
           apartmentTitle: listing.title,
           checkIn: checkInDate,
@@ -417,12 +422,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         localStorage.setItem('booking_confirmation_payload', JSON.stringify(payload));
 
         try {
-          // Await the fetch request so Netlify completes the call before routing
           const res = await fetch('/api/bookings/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              transactionRef: response.reference,
+              transactionRef: finalRef,
               bookingData: payload,
             }),
           });
@@ -435,7 +439,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             return;
           }
 
-          router.push(`/booking-success?reference=${response.reference}&listing=${resolvedParams.id}`);
+          router.push(`/booking-success?reference=${finalRef}&listing=${resolvedParams.id}`);
         } catch (err) {
           console.error('Network error during booking sync:', err);
           alert('Payment successful, but a network error occurred while recording your booking.');
