@@ -33,6 +33,7 @@ interface BookingItem {
 interface ProteinItem {
   name: string;
   qty: number;
+  price?: number;
 }
 
 interface ProcessedDish {
@@ -42,6 +43,7 @@ interface ProcessedDish {
   liters?: number;
   proteins?: ProteinItem[];
   swallow?: string;
+  price?: number;
 }
 
 interface KitchenScheduleProps {
@@ -66,38 +68,51 @@ const safeParseJson = (data: any): any => {
 const formatItemName = (id: string): string => {
   if (!id) return '';
   return String(id)
-    .replace(/^p_/, '')
-    .replace(/^s_/, '')
-    .replace(/^pr_/, '')
-    .replace(/^rc_/, '')
+    .replace(/^(sp_|rc_|pr_|p_|s_)/gi, '')
     .replace(/_/g, ' ')
+    .trim()
     .toUpperCase();
 };
 
 const parseProteinsWithQty = (rawProteins: any): ProteinItem[] => {
   if (!rawProteins) return [];
-  const proteinMap: Record<string, number> = {};
+  const proteinMap: Record<string, { qty: number; price: number }> = {};
 
   if (Array.isArray(rawProteins)) {
     rawProteins.forEach((p) => {
       if (typeof p === 'string') {
         const key = formatItemName(p);
-        proteinMap[key] = (proteinMap[key] || 0) + 1;
+        proteinMap[key] = {
+          qty: (proteinMap[key]?.qty || 0) + 1,
+          price: proteinMap[key]?.price || 0,
+        };
       } else if (typeof p === 'object' && p !== null) {
         const name = formatItemName(p.name || p.id || p.title || 'Protein');
         const qty = Number(p.qty || p.quantity || p.count || 1);
-        proteinMap[name] = (proteinMap[name] || 0) + qty;
+        const price = Number(p.price || 0);
+        proteinMap[name] = {
+          qty: (proteinMap[name]?.qty || 0) + qty,
+          price: (proteinMap[name]?.price || 0) + price,
+        };
       }
     });
   } else if (typeof rawProteins === 'object') {
     Object.entries(rawProteins).forEach(([key, val]) => {
       const name = formatItemName(key);
       const qty = typeof val === 'number' ? val : Number((val as any)?.qty || (val as any)?.count || 1);
-      proteinMap[name] = (proteinMap[name] || 0) + qty;
+      const price = Number((val as any)?.price || 0);
+      proteinMap[name] = {
+        qty: (proteinMap[name]?.qty || 0) + qty,
+        price: (proteinMap[name]?.price || 0) + price,
+      };
     });
   }
 
-  return Object.entries(proteinMap).map(([name, qty]) => ({ name, qty }));
+  return Object.entries(proteinMap).map(([name, data]) => ({
+    name,
+    qty: data.qty,
+    price: data.price,
+  }));
 };
 
 const deepFindKey = (obj: any, targetKeys: string[]): any => {
@@ -211,6 +226,33 @@ const isTruthyService = (val: any): boolean => {
   return !['false', 'none', 'no', '0', 'no_pickup', 'none_selected', 'null', 'undefined', ''].includes(str);
 };
 
+const extractKitchenTotalCost = (booking: BookingItem, dishesList: ProcessedDish[]): number => {
+  const explicitTotal =
+    booking.kitchenTotal ||
+    booking.mealTotal ||
+    booking.mealsPrice ||
+    booking.foodTotal ||
+    booking.dailyMealSelections?.totalPrice ||
+    booking.dailyMealSelections?.totalCost ||
+    booking.addons?.mealTotal ||
+    booking.addons?.kitchenTotal;
+
+  if (explicitTotal && !isNaN(Number(explicitTotal)) && Number(explicitTotal) > 0) {
+    return Number(explicitTotal);
+  }
+
+  // Sum calculated dish/protein prices if explicit total isn't set at root
+  let calculatedSum = 0;
+  dishesList.forEach((dish) => {
+    if (dish.price) calculatedSum += Number(dish.price);
+    dish.proteins?.forEach((p) => {
+      if (p.price) calculatedSum += Number(p.price);
+    });
+  });
+
+  return calculatedSum;
+};
+
 export default function KitchenSchedule({ bookings, showAddons = true }: KitchenScheduleProps) {
   if (!bookings || bookings.length === 0) {
     return <div className="text-gray-400 p-4">No active schedule logs available.</div>;
@@ -240,8 +282,8 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
         const diningPref = extractDiningPreference(booking);
 
         const groupedMeals: Record<string, ProcessedDish[]> = {};
+        const allParsedDishes: ProcessedDish[] = [];
 
-        // Non-recursive, stack-based parser to safe-guard against circular dependencies
         const workStack: Array<{ node: any; currentCategory: string; dateContext: string }> = [
           { node: mealData, currentCategory: '', dateContext: '' }
         ];
@@ -255,11 +297,13 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
           if (typeof parsed === 'string') {
             const targetDate = dateContext || 'General Schedule';
             if (!groupedMeals[targetDate]) groupedMeals[targetDate] = [];
-            groupedMeals[targetDate].push({
+            const dishObj: ProcessedDish = {
               slot: formatItemName(currentCategory || 'Main Meal'),
               category: 'Food',
               name: formatItemName(parsed),
-            });
+            };
+            groupedMeals[targetDate].push(dishObj);
+            allParsedDishes.push(dishObj);
             continue;
           }
 
@@ -298,14 +342,18 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                   innerParsed.proteinIds || innerParsed.proteins || innerParsed.protein
                 );
 
-                groupedMeals[targetDate].push({
+                const dishObj: ProcessedDish = {
                   slot: formatItemName(nextCategory || key || 'Dish'),
                   category: 'Food',
                   name: formatItemName(innerParsed.name || innerParsed.title || key),
                   liters: innerParsed.liters ? Number(innerParsed.liters) : undefined,
                   proteins: proteinList,
                   swallow: innerParsed.swallow ? formatItemName(innerParsed.swallow) : undefined,
-                });
+                  price: innerParsed.price ? Number(innerParsed.price) : undefined,
+                };
+
+                groupedMeals[targetDate].push(dishObj);
+                allParsedDishes.push(dishObj);
               } else {
                 workStack.push({ node: val, currentCategory: nextCategory, dateContext: nextDate });
               }
@@ -316,6 +364,8 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
         const normalizedMealEntries = Object.entries(groupedMeals).filter(
           ([, dishes]) => dishes.length > 0
         );
+
+        const totalKitchenCost = extractKitchenTotalCost(booking, allParsedDishes);
 
         // Parent service existence checks
         const isSecurityActive = isTruthyService(
@@ -336,7 +386,6 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
             ? Object.entries(addonData).filter(([key, val]: [string, any]) => {
                 const lowerKey = key.toLowerCase();
 
-                // 1. Omit metadata & booking/meal configuration keys
                 const ignoredKeys = [
                   'guestcount',
                   'totalguests',
@@ -351,7 +400,6 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                 ];
                 if (ignoredKeys.includes(lowerKey)) return false;
 
-                // 2. Omit security sub-properties if security wasn't explicitly selected
                 const securitySubFields = [
                   'securitycount',
                   'security_count',
@@ -361,7 +409,6 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                 ];
                 if (securitySubFields.includes(lowerKey) && !isSecurityActive) return false;
 
-                // 3. Omit airport sub-properties if airport transfer wasn't explicitly selected
                 const airportSubFields = [
                   'airportdirection',
                   'airport_direction',
@@ -373,7 +420,6 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                 ];
                 if (airportSubFields.includes(lowerKey) && !isAirportActive) return false;
 
-                // 4. Omit housekeeping sub-properties if housekeeping wasn't explicitly selected
                 const housekeepingSubFields = [
                   'housekeepingschedule',
                   'housekeeping_schedule',
@@ -382,11 +428,9 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                 ];
                 if (housekeepingSubFields.includes(lowerKey) && !isHousekeepingActive) return false;
 
-                // 5. Omit chauffeur sub-properties if chauffeur service wasn't explicitly selected
                 const chauffeurSubFields = ['chauffeurservice', 'chauffeurcar', 'vehicle'];
                 if (chauffeurSubFields.includes(lowerKey) && !isChauffeurActive) return false;
 
-                // 6. Check value truthiness
                 if (!isTruthyService(val)) return false;
 
                 return true;
@@ -400,6 +444,7 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
             key={cardKey}
             className="p-6 rounded-xl bg-gray-950 border border-gray-800 space-y-6 shadow-md"
           >
+            {/* Header Info */}
             <div className="flex justify-between items-start border-b border-gray-800 pb-4">
               <div>
                 <div className="flex items-center gap-3 flex-wrap">
@@ -436,9 +481,17 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                 <span className="px-3 py-1 text-xs font-semibold rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
                   {booking.status}
                 </span>
+
+                {/* Total Kitchen Order Cost Badge */}
+                {totalKitchenCost > 0 && (
+                  <span className="px-3 py-1 text-xs font-bold rounded-full bg-amber-950/90 text-amber-300 border border-amber-700 font-mono">
+                    💰 Food Order Total: ₦{totalKitchenCost.toLocaleString()}
+                  </span>
+                )}
               </div>
             </div>
 
+            {/* Daily Meal Selections Section */}
             <div>
               <h4 className="text-xs font-bold text-cyan-400 tracking-wider uppercase mb-3">
                 Daily Meal Selections, Swallows & Protein Add-ons
@@ -462,7 +515,9 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                           <div key={dIdx} className="text-xs space-y-1 bg-black/40 p-3 rounded-lg border border-white/5">
                             <div className="flex items-center justify-between text-gray-200 font-semibold">
                               <span>
-                                <span className="text-cyan-400">{dish.slot}: </span>
+                                {dish.slot && dish.slot.toUpperCase() !== dish.name.toUpperCase() && (
+                                  <span className="text-cyan-400">{dish.slot}: </span>
+                                )}
                                 {dish.name}
                               </span>
                               {dish.liters && (
@@ -499,6 +554,7 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
               )}
             </div>
 
+            {/* Selected Add-ons & Services */}
             {showAddons && (
               <div>
                 <h4 className="text-xs font-bold text-cyan-400 tracking-wider uppercase mb-3">
