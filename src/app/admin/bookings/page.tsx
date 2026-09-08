@@ -1,7 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import KitchenSchedule from './KitchenSchedule';
+
+// --- SUPABASE CLIENT SETUP ---
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+);
 
 // --- TYPES ---
 export interface Booking {
@@ -82,7 +89,6 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
   const addons = parseJson(booking?.addons);
   const mealsObj = parseJson(booking?.dailyMealSelections || booking?.meals || addons?.kitchen || addons?.food || addons?.meals);
 
-  // Exact overarching total calculated directly on frontend selection
   const explicitTotal = extractNumber(
     booking?.kitchenTotal ||
     booking?.mealTotal ||
@@ -117,13 +123,12 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
 
     const liters = dishNode.liters ? Number(dishNode.liters) : undefined;
     
-    // Extract exact price submitted for this dish from frontend
     const dishPrice = extractNumber(
       dishNode.price || dishNode.amount || dishNode.cost || dishNode.totalPrice || dishNode.total || dishNode.basePrice
     );
     calculatedCost += dishPrice;
 
-    let dishLabel = dishName.toLowerCase();
+    let dishLabel = dishName.toUpperCase();
     if (liters) dishLabel += ` (${liters}L)`;
     if (dishPrice > 0) dishLabel += ` - ₦${dishPrice.toLocaleString()}`;
     itemNames.push(dishLabel);
@@ -132,28 +137,28 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
     const swallow = dishNode.swallow || dishNode.swallows || dishNode.swallowId;
     if (swallow) {
       if (typeof swallow === 'string') {
-        const cleanSwallow = swallow.replace(/^sw_/, '').replace(/_/g, ' ').trim().toLowerCase();
-        itemNames.push(`swallow: ${cleanSwallow}`);
+        const cleanSwallow = swallow.replace(/^sw_/, '').replace(/_/g, ' ').trim().toUpperCase();
+        itemNames.push(`SWALLOW: ${cleanSwallow}`);
       } else if (Array.isArray(swallow)) {
         swallow.forEach((s) => {
           if (typeof s === 'string') {
-            itemNames.push(`swallow: ${s.replace(/^sw_/, '').replace(/_/g, ' ').trim().toLowerCase()}`);
+            itemNames.push(`SWALLOW: ${s.replace(/^sw_/, '').replace(/_/g, ' ').trim().toUpperCase()}`);
           } else if (typeof s === 'object' && s !== null) {
-            const sName = String(s.name || s.title || s.id || 'swallow').replace(/^sw_/, '').replace(/_/g, ' ').trim().toLowerCase();
+            const sName = String(s.name || s.title || s.id || 'swallow').replace(/^sw_/, '').replace(/_/g, ' ').trim().toUpperCase();
             const sPrice = extractNumber(s.price || s.amount || s.cost);
             if (sPrice > 0) calculatedCost += sPrice;
-            itemNames.push(`swallow: ${sName}${sPrice > 0 ? ` (₦${sPrice.toLocaleString()})` : ''}`);
+            itemNames.push(`SWALLOW: ${sName}${sPrice > 0 ? ` (₦${sPrice.toLocaleString()})` : ''}`);
           }
         });
       } else if (typeof swallow === 'object' && swallow !== null) {
-        const sName = String(swallow.name || swallow.title || swallow.id || 'swallow').replace(/^sw_/, '').replace(/_/g, ' ').trim().toLowerCase();
+        const sName = String(swallow.name || swallow.title || swallow.id || 'swallow').replace(/^sw_/, '').replace(/_/g, ' ').trim().toUpperCase();
         const sPrice = extractNumber(swallow.price || swallow.amount || swallow.cost);
         if (sPrice > 0) calculatedCost += sPrice;
-        itemNames.push(`swallow: ${sName}${sPrice > 0 ? ` (₦${sPrice.toLocaleString()})` : ''}`);
+        itemNames.push(`SWALLOW: ${sName}${sPrice > 0 ? ` (₦${sPrice.toLocaleString()})` : ''}`);
       }
     }
 
-    // Proteins & Add-ons (Exact frontend quantities and prices)
+    // Proteins & Add-ons
     const rawProteins = dishNode.proteinAddons || dishNode.proteins || dishNode.proteinIds || dishNode.selectedProteins || dishNode.protein;
     if (rawProteins) {
       if (Array.isArray(rawProteins)) {
@@ -161,11 +166,11 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
 
         rawProteins.forEach((p) => {
           if (typeof p === 'string') {
-            const cleanP = p.replace(/^pr_/, '').replace(/_/g, ' ').trim().toLowerCase();
+            const cleanP = p.replace(/^pr_/, '').replace(/_/g, ' ').trim().toUpperCase();
             if (!proteinCounts[cleanP]) proteinCounts[cleanP] = { qty: 0, price: 0 };
             proteinCounts[cleanP].qty += 1;
           } else if (typeof p === 'object' && p !== null) {
-            const cleanP = String(p.name || p.id || p.title || 'protein').replace(/^pr_/, '').replace(/_/g, ' ').trim().toLowerCase();
+            const cleanP = String(p.name || p.id || p.title || 'protein').replace(/^pr_/, '').replace(/_/g, ' ').trim().toUpperCase();
             const qty = extractNumber(p.qty || p.quantity || p.count || 1);
             const price = extractNumber(p.price || p.amount || p.total || p.cost);
             if (!proteinCounts[cleanP]) proteinCounts[cleanP] = { qty: 0, price: 0 };
@@ -177,11 +182,11 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
         Object.entries(proteinCounts).forEach(([pName, info]) => {
           calculatedCost += info.price;
           const priceLabel = info.price > 0 ? ` - ₦${info.price.toLocaleString()}` : '';
-          itemNames.push(`${pName} (${info.qty} pcs)${priceLabel}`);
+          itemNames.push(`+ ${pName} (${info.qty} pcs)${priceLabel}`);
         });
       } else if (typeof rawProteins === 'object') {
         Object.entries(rawProteins).forEach(([pKey, pVal]: [string, any]) => {
-          const cleanP = pKey.replace(/^pr_/, '').replace(/_/g, ' ').trim().toLowerCase();
+          const cleanP = pKey.replace(/^pr_/, '').replace(/_/g, ' ').trim().toUpperCase();
           let qty = 1;
           let price = 0;
           if (typeof pVal === 'number') {
@@ -192,7 +197,7 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
           }
           calculatedCost += price;
           const priceLabel = price > 0 ? ` - ₦${price.toLocaleString()}` : '';
-          itemNames.push(`${cleanP} (${qty} pcs)${priceLabel}`);
+          itemNames.push(`+ ${cleanP} (${qty} pcs)${priceLabel}`);
         });
       }
     }
@@ -213,6 +218,9 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
         const isDish =
           parsedVal.name ||
           parsedVal.title ||
+          parsedVal.price !== undefined ||
+          parsedVal.amount !== undefined ||
+          parsedVal.cost !== undefined ||
           parsedVal.proteinIds ||
           parsedVal.proteinAddons ||
           parsedVal.proteins ||
@@ -231,7 +239,6 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
 
   traverse(mealsObj);
 
-  // Strictly use explicit frontend calculated total if available, otherwise exact sum of item selection prices
   const finalTotal = explicitTotal > 0 ? explicitTotal : calculatedCost;
   return { names: Array.from(new Set(itemNames)), totalCost: finalTotal };
 };
@@ -300,16 +307,76 @@ const getBookingApartmentRevenue = (b: Booking): number => {
 
 // --- MAIN COMPONENT ---
 export default function AdminDashboard() {
+  const [session, setSession] = useState<any>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
+  // Login Form States
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // Dashboard Operational States
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
 
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setIsAuthChecking(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setIsAuthChecking(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError('');
+    setIsLoggingIn(true);
+
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+    } catch (err: any) {
+      setLoginError(err.message || 'Authentication failed. Please verify credentials.');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+    setBookings([]);
+  };
+
   const fetchBookings = async () => {
+    if (!session?.access_token) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/bookings');
+      const res = await fetch('/api/admin/bookings', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`
+        }
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
+
       const data = await res.json();
       setBookings(Array.isArray(data) ? data : data?.bookings || []);
     } catch (err) {
@@ -320,25 +387,27 @@ export default function AdminDashboard() {
     }
   };
 
-  useEffect(() => { fetchBookings(); }, []);
+  useEffect(() => {
+    if (session) fetchBookings();
+  }, [session]);
 
   const filteredBookings = useMemo(() => {
     return bookings.filter((b) => {
       if (selectedDate) {
-        const targetTime = new Date(selectedDate).setHours(0, 0, 0, 0);
+        const targetTime = new Date(`${selectedDate}T00:00:00`).getTime();
         const checkInRaw = b?.checkIn || b?.createdAt || b?.date;
         const checkOutRaw = b?.checkOut || checkInRaw;
         
         if (!checkInRaw) return false;
 
         const checkInTime = new Date(checkInRaw).setHours(0, 0, 0, 0);
-        const checkOutTime = new Date(checkOutRaw).setHours(0, 0, 0, 0);
+        const checkOutTime = new Date(checkOutRaw).setHours(23, 59, 59, 999);
 
         if (targetTime < checkInTime || targetTime > checkOutTime) return false;
       }
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase();
-      const ref = String(b?.paymentReference || b?.id).toLowerCase();
+      const ref = String(b?.paymentReference || b?.id || b?.reference).toLowerCase();
       const name = String(b?.customerName || b?.guestName).toLowerCase();
       return ref.includes(q) || name.includes(q);
     });
@@ -360,6 +429,66 @@ export default function AdminDashboard() {
 
   const activeDeptConfig = DEPARTMENT_CONFIGS.find((d) => d.id === activeTab);
 
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center text-cyan-400 font-mono text-sm">
+        Authenticating Session...
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center p-4 font-sans">
+        <div className="w-full max-w-md bg-gray-950 border border-gray-800 rounded-2xl p-8 space-y-6 shadow-2xl">
+          <div className="text-center space-y-2">
+            <h1 className="text-xl font-extrabold text-white tracking-wider">ADMIN ACCESS</h1>
+          </div>
+
+          {loginError && (
+            <div className="bg-red-950/50 border border-red-800 text-red-300 text-xs p-3 rounded-lg text-center font-medium">
+              {loginError}
+            </div>
+          )}
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Email Address</label>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="admin@domain.com"
+                className="w-full px-4 py-2.5 text-xs bg-gray-900 border border-gray-800 rounded-xl text-white focus:outline-none focus:border-cyan-500 transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-300 mb-1.5">Password</label>
+              <input
+                type="password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••••••"
+                className="w-full px-4 py-2.5 text-xs bg-gray-900 border border-gray-800 rounded-xl text-white focus:outline-none focus:border-cyan-500 transition"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="w-full py-3 text-xs font-bold rounded-xl bg-yellow-600 hover:bg-yellow-500 text-black transition cursor-pointer disabled:opacity-50 mt-2"
+            >
+              {isLoggingIn ? 'Authenticating...' : 'Sign In'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-black text-white font-sans flex flex-col md:flex-row">
       <aside className="w-full md:w-64 bg-gray-950 border-r border-gray-800 p-6 flex flex-col justify-between shrink-0">
@@ -376,9 +505,12 @@ export default function AdminDashboard() {
             ))}
           </nav>
         </div>
-        <div className="pt-6 border-t border-gray-900 mt-6 md:mt-0">
+        <div className="pt-6 border-t border-gray-900 mt-6 md:mt-0 space-y-2">
           <button onClick={fetchBookings} disabled={loading} className="w-full py-2 px-3 text-xs font-semibold rounded-lg bg-gray-900 border border-gray-700 hover:bg-gray-800 transition text-cyan-300 cursor-pointer disabled:opacity-50">
             {loading ? 'Refreshing...' : '🔄 Refresh Data'}
+          </button>
+          <button onClick={handleLogout} className="w-full py-2 px-3 text-xs font-semibold rounded-lg bg-red-950/40 border border-red-900 hover:bg-red-900/50 transition text-red-400 cursor-pointer">
+            🔒 Log Out
           </button>
         </div>
       </aside>
@@ -392,9 +524,32 @@ export default function AdminDashboard() {
             {selectedDate && <button onClick={() => setSelectedDate('')} className="px-2 py-1 text-[11px] bg-gray-900 border border-gray-700 hover:bg-gray-800 text-gray-400 rounded-md cursor-pointer">Clear</button>}
           </div>
         </div>
-        {activeTab === 'overview' && <OverviewTab filteredBookings={filteredBookings} selectedDate={selectedDate} searchQuery={searchQuery} setSearchQuery={setSearchQuery} totalRevenue={totalRevenue} departmentData={departmentData} departmentRevenues={departmentRevenues} />}
-        {activeTab === 'apartments' && <ApartmentsTab filteredBookings={filteredBookings} apartmentsRevenue={apartmentsRevenue} />}
-        {activeDeptConfig && <DepartmentSection config={activeDeptConfig} bookings={filteredBookings} revenue={departmentRevenues[activeDeptConfig.id]} />}
+
+        {activeTab === 'overview' && (
+          <OverviewTab 
+            filteredBookings={filteredBookings} 
+            selectedDate={selectedDate} 
+            searchQuery={searchQuery} 
+            setSearchQuery={setSearchQuery} 
+            totalRevenue={totalRevenue} 
+            departmentData={departmentData} 
+          />
+        )}
+        
+        {activeTab === 'apartments' && (
+          <ApartmentsTab 
+            filteredBookings={filteredBookings} 
+            apartmentsRevenue={apartmentsRevenue} 
+          />
+        )}
+        
+        {activeDeptConfig && (
+          <DepartmentSection 
+            config={activeDeptConfig} 
+            bookings={filteredBookings} 
+            revenue={departmentRevenues[activeDeptConfig.id]} 
+          />
+        )}
       </main>
     </div>
   );
@@ -434,8 +589,8 @@ function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQue
       <div className="p-6 rounded-xl bg-gray-950 border border-gray-800 space-y-4">
         <h3 className="text-sm font-bold uppercase tracking-wider text-cyan-400 border-b border-gray-800 pb-3">Departmental Revenue Overview</h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {departmentData.map((dept: any, i: number) => (
-            <div key={i} className="p-3.5 rounded-lg bg-gray-900 border border-gray-800">
+          {departmentData.map((dept: any) => (
+            <div key={`dept-card-${dept.name}`} className="p-3.5 rounded-lg bg-gray-900 border border-gray-800">
               <div className="flex justify-between items-center text-xs mb-2">
                 <span className="text-gray-400 font-semibold">{dept.name}</span>
                 <span className={`font-mono font-bold ${dept.color}`}>₦{dept.revenue.toLocaleString()}</span>
@@ -472,20 +627,23 @@ function ApartmentsTab({ filteredBookings, apartmentsRevenue }: any) {
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {filteredBookings.map((b: Booking, idx: number) => (
-          <div key={idx} className="p-5 rounded-xl bg-gray-950 border border-gray-800 space-y-3">
-            <div className="flex justify-between items-center"><span className="px-2.5 py-1 text-xs font-bold rounded bg-cyan-950 text-cyan-300 border border-cyan-800">{b?.listingId || 'N/A'}</span><span className="text-xs text-emerald-400 font-semibold">{b?.status || 'Confirmed'}</span></div>
-            <div>
-              <h3 className="text-sm font-bold text-white">{b?.customerName || 'Guest'}</h3>
-              <p className="text-xs text-amber-400 font-mono mt-1">📞 {b?.phone || b?.phoneNumber || 'N/A'}</p>
-              <p className="text-xs text-gray-400 mt-1">📅 {b?.checkIn ? new Date(b.checkIn).toLocaleDateString() : 'N/A'} - {b?.checkOut ? new Date(b.checkOut).toLocaleDateString() : 'N/A'}</p>
+        {filteredBookings.map((b: Booking, idx: number) => {
+          const bookingKey = b.id || b.reference || `apt-${idx}`;
+          return (
+            <div key={bookingKey} className="p-5 rounded-xl bg-gray-950 border border-gray-800 space-y-3">
+              <div className="flex justify-between items-center"><span className="px-2.5 py-1 text-xs font-bold rounded bg-cyan-950 text-cyan-300 border border-cyan-800">{b?.listingId || 'N/A'}</span><span className="text-xs text-emerald-400 font-semibold">{b?.status || 'Confirmed'}</span></div>
+              <div>
+                <h3 className="text-sm font-bold text-white">{b?.customerName || 'Guest'}</h3>
+                <p className="text-xs text-amber-400 font-mono mt-1">📞 {b?.phone || b?.phoneNumber || 'N/A'}</p>
+                <p className="text-xs text-gray-400 mt-1">📅 {b?.checkIn ? new Date(b.checkIn).toLocaleDateString() : 'N/A'} - {b?.checkOut ? new Date(b.checkOut).toLocaleDateString() : 'N/A'}</p>
+              </div>
+              <div className="pt-2 border-t border-gray-900 flex justify-between text-xs text-gray-400">
+                <span>Nights: {Math.max(1, Number(b?.totalNights) || 1)}</span>
+                <span className="text-cyan-400 font-mono font-bold">₦{getBookingApartmentRevenue(b).toLocaleString()}</span>
+              </div>
             </div>
-            <div className="pt-2 border-t border-gray-900 flex justify-between text-xs text-gray-400">
-              <span>Nights: {Math.max(1, Number(b?.totalNights) || 1)}</span>
-              <span className="text-cyan-400 font-mono font-bold">₦{getBookingApartmentRevenue(b).toLocaleString()}</span>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -505,9 +663,10 @@ function DepartmentSection({ config, bookings, revenue }: { config: DeptConfig; 
         {bookings.map((b: Booking, idx: number) => {
           const addons = parseJson(b?.addons);
           const deptTotal = calculateSingleBookingDeptRevenue(b, config);
+          const bookingKey = b.id || b.reference || `dept-${config.id}-${idx}`;
 
           return (
-            <div key={idx} className="p-5 rounded-xl bg-gray-950 border border-gray-800 flex flex-col md:flex-row justify-between items-start gap-4">
+            <div key={bookingKey} className="p-5 rounded-xl bg-gray-950 border border-gray-800 flex flex-col md:flex-row justify-between items-start gap-4">
               <div>
                 <span className="px-2 py-0.5 text-[10px] uppercase font-mono rounded bg-gray-900 text-cyan-300 border border-gray-800">{b?.listingId || 'Suite'}</span>
                 <h3 className="text-sm font-bold text-white mt-2">{b?.customerName || 'Guest'}</h3>
@@ -550,11 +709,11 @@ function RenderDepartmentDetails({ configId, booking, addons }: { configId: Depa
 
     return (
       <div className="text-xs text-gray-300 space-y-1">
-        <span className="text-gray-400 block mb-1 font-medium">Found Items:</span>
+        <span className="text-gray-400 block mb-1 font-medium">Found Items & Breakdown:</span>
         {names.length > 0 ? (
           <ul className="list-disc list-inside space-y-1 text-cyan-300 max-h-36 overflow-y-auto">
             {names.map((m, i) => (
-              <li key={i} className="capitalize">{m}</li>
+              <li key={`item-${i}`}>{m}</li>
             ))}
           </ul>
         ) : (

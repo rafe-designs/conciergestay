@@ -43,6 +43,7 @@ interface ProcessedDish {
   liters?: number;
   proteins?: ProteinItem[];
   swallow?: string;
+  swallowPrice?: number;
   price?: number;
 }
 
@@ -68,7 +69,7 @@ const safeParseJson = (data: any): any => {
 const formatItemName = (id: string): string => {
   if (!id) return '';
   return String(id)
-    .replace(/^(sp_|rc_|pr_|p_|s_)/gi, '')
+    .replace(/^(sp_|rc_|pr_|p_|s_|sw_)/gi, '')
     .replace(/_/g, ' ')
     .trim()
     .toUpperCase();
@@ -89,7 +90,7 @@ const parseProteinsWithQty = (rawProteins: any): ProteinItem[] => {
       } else if (typeof p === 'object' && p !== null) {
         const name = formatItemName(p.name || p.id || p.title || 'Protein');
         const qty = Number(p.qty || p.quantity || p.count || 1);
-        const price = Number(p.price || 0);
+        const price = Number(p.price || p.amount || p.cost || 0);
         proteinMap[name] = {
           qty: (proteinMap[name]?.qty || 0) + qty,
           price: (proteinMap[name]?.price || 0) + price,
@@ -99,8 +100,8 @@ const parseProteinsWithQty = (rawProteins: any): ProteinItem[] => {
   } else if (typeof rawProteins === 'object') {
     Object.entries(rawProteins).forEach(([key, val]) => {
       const name = formatItemName(key);
-      const qty = typeof val === 'number' ? val : Number((val as any)?.qty || (val as any)?.count || 1);
-      const price = Number((val as any)?.price || 0);
+      const qty = typeof val === 'number' ? 1 : Number((val as any)?.qty || (val as any)?.quantity || (val as any)?.count || 1);
+      const price = typeof val === 'number' ? val : Number((val as any)?.price || (val as any)?.amount || (val as any)?.cost || 0);
       proteinMap[name] = {
         qty: (proteinMap[name]?.qty || 0) + qty,
         price: (proteinMap[name]?.price || 0) + price,
@@ -241,10 +242,10 @@ const extractKitchenTotalCost = (booking: BookingItem, dishesList: ProcessedDish
     return Number(explicitTotal);
   }
 
-  // Sum calculated dish/protein prices if explicit total isn't set at root
   let calculatedSum = 0;
   dishesList.forEach((dish) => {
     if (dish.price) calculatedSum += Number(dish.price);
+    if (dish.swallowPrice) calculatedSum += Number(dish.swallowPrice);
     dish.proteins?.forEach((p) => {
       if (p.price) calculatedSum += Number(p.price);
     });
@@ -314,7 +315,7 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
 
           if (typeof parsed === 'object' && parsed !== null) {
             Object.entries(parsed).forEach(([key, val]) => {
-              if (key === 'prepModes' || key === 'prep_modes') return;
+              if (key === 'prepModes' || key === 'prep_modes' || key === 'totalPrice' || key === 'grandTotal') return;
 
               const isDatePattern = /^\d{4}-\d{2}-\d{2}/.test(key) || key.toLowerCase().includes('day');
               const nextDate = isDatePattern ? key : dateContext;
@@ -328,6 +329,9 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                 !Array.isArray(innerParsed) &&
                 (innerParsed.name ||
                   innerParsed.title ||
+                  innerParsed.price !== undefined ||
+                  innerParsed.amount !== undefined ||
+                  innerParsed.cost !== undefined ||
                   innerParsed.proteinIds ||
                   innerParsed.proteins ||
                   innerParsed.protein ||
@@ -342,14 +346,27 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                   innerParsed.proteinIds || innerParsed.proteins || innerParsed.protein
                 );
 
+                let swallowName: string | undefined = undefined;
+                let swallowCost: number | undefined = undefined;
+
+                if (innerParsed.swallow) {
+                  if (typeof innerParsed.swallow === 'string') {
+                    swallowName = formatItemName(innerParsed.swallow);
+                  } else if (typeof innerParsed.swallow === 'object') {
+                    swallowName = formatItemName(innerParsed.swallow.name || innerParsed.swallow.title || innerParsed.swallow.id || 'Swallow');
+                    swallowCost = Number(innerParsed.swallow.price || innerParsed.swallow.amount || innerParsed.swallow.cost || 0);
+                  }
+                }
+
                 const dishObj: ProcessedDish = {
                   slot: formatItemName(nextCategory || key || 'Dish'),
                   category: 'Food',
                   name: formatItemName(innerParsed.name || innerParsed.title || key),
                   liters: innerParsed.liters ? Number(innerParsed.liters) : undefined,
                   proteins: proteinList,
-                  swallow: innerParsed.swallow ? formatItemName(innerParsed.swallow) : undefined,
-                  price: innerParsed.price ? Number(innerParsed.price) : undefined,
+                  swallow: swallowName,
+                  swallowPrice: swallowCost,
+                  price: innerParsed.price || innerParsed.amount || innerParsed.cost ? Number(innerParsed.price || innerParsed.amount || innerParsed.cost) : undefined,
                 };
 
                 groupedMeals[targetDate].push(dishObj);
@@ -367,7 +384,6 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
 
         const totalKitchenCost = extractKitchenTotalCost(booking, allParsedDishes);
 
-        // Parent service existence checks
         const isSecurityActive = isTruthyService(
           addonData?.security || addonData?.securityType || addonData?.securityService
         );
@@ -482,7 +498,6 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                   {booking.status}
                 </span>
 
-                {/* Total Kitchen Order Cost Badge */}
                 {totalKitchenCost > 0 && (
                   <span className="px-3 py-1 text-xs font-bold rounded-full bg-amber-950/90 text-amber-300 border border-amber-700 font-mono">
                     💰 Food Order Total: ₦{totalKitchenCost.toLocaleString()}
@@ -505,48 +520,70 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {normalizedMealEntries.map(([dayLabel, dishes], idx) => (
-                    <div key={idx} className="p-4 rounded-lg bg-gray-900/70 border border-gray-800 space-y-2">
+                  {normalizedMealEntries.map(([dayLabel, dishes], dayIdx) => (
+                    <div key={`day-${dayIdx}`} className="p-4 rounded-lg bg-gray-900/70 border border-gray-800 space-y-2">
                       <span className="text-xs font-bold text-amber-400 block mb-2">
                         📅 {dayLabel}:
                       </span>
                       <div className="space-y-2">
-                        {dishes.map((dish, dIdx) => (
-                          <div key={dIdx} className="text-xs space-y-1 bg-black/40 p-3 rounded-lg border border-white/5">
-                            <div className="flex items-center justify-between text-gray-200 font-semibold">
-                              <span>
-                                {dish.slot && dish.slot.toUpperCase() !== dish.name.toUpperCase() && (
-                                  <span className="text-cyan-400">{dish.slot}: </span>
-                                )}
-                                {dish.name}
-                              </span>
-                              {dish.liters && (
-                                <span className="text-xs font-mono text-amber-300 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800">
-                                  {dish.liters} Liters
+                        {dishes.map((dish, dIdx) => {
+                          const dishLineTotal = (dish.price || 0) + (dish.swallowPrice || 0) + (dish.proteins?.reduce((sum, p) => sum + (p.price || 0), 0) || 0);
+
+                          return (
+                            <div key={`dish-${dIdx}`} className="text-xs space-y-1 bg-black/40 p-3 rounded-lg border border-white/5">
+                              <div className="flex items-center justify-between text-gray-200 font-semibold">
+                                <span>
+                                  {dish.slot && dish.slot.toUpperCase() !== dish.name.toUpperCase() && (
+                                    <span className="text-cyan-400">{dish.slot}: </span>
+                                  )}
+                                  {dish.name}
                                 </span>
-                              )}
-                            </div>
-
-                            {dish.swallow && (
-                              <div className="pl-3 border-l-2 border-cyan-500/60 text-[11px] text-cyan-300 font-medium mt-1">
-                                🥣 Swallow: {dish.swallow}
-                              </div>
-                            )}
-
-                            {dish.proteins && dish.proteins.length > 0 && (
-                              <div className="pl-3 border-l-2 border-amber-500/60 text-[11px] text-amber-200 space-y-1 mt-2">
-                                <span className="text-gray-400 font-medium">Selected Protein Add-ons:</span>
-                                <div className="flex flex-wrap gap-1.5 mt-1">
-                                  {dish.proteins.map((p, pIdx) => (
-                                    <span key={pIdx} className="bg-amber-950/40 text-amber-300 border border-amber-800/60 px-2 py-0.5 rounded text-[11px] font-mono">
-                                      + {p.name} <strong className="text-white">({p.qty} pcs)</strong>
+                                <div className="flex items-center gap-2">
+                                  {dish.liters && (
+                                    <span className="text-xs font-mono text-amber-300 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800">
+                                      {dish.liters} Liters
                                     </span>
-                                  ))}
+                                  )}
+                                  {dish.price && dish.price > 0 && (
+                                    <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
+                                      ₦{dish.price.toLocaleString()}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
-                            )}
-                          </div>
-                        ))}
+
+                              {dish.swallow && (
+                                <div className="flex justify-between items-center pl-3 border-l-2 border-cyan-500/60 text-[11px] text-cyan-300 font-medium mt-1">
+                                  <span>🥣 Swallow: {dish.swallow}</span>
+                                  {dish.swallowPrice && dish.swallowPrice > 0 && (
+                                    <span className="font-mono text-emerald-400">₦{dish.swallowPrice.toLocaleString()}</span>
+                                  )}
+                                </div>
+                              )}
+
+                              {dish.proteins && dish.proteins.length > 0 && (
+                                <div className="pl-3 border-l-2 border-amber-500/60 text-[11px] text-amber-200 space-y-1 mt-2">
+                                  <span className="text-gray-400 font-medium">Selected Protein Add-ons:</span>
+                                  <div className="flex flex-wrap gap-1.5 mt-1">
+                                    {dish.proteins.map((p, pIdx) => (
+                                      <span key={`protein-${pIdx}`} className="bg-amber-950/40 text-amber-300 border border-amber-800/60 px-2 py-0.5 rounded text-[11px] font-mono">
+                                        + {p.name} <strong className="text-white">({p.qty} pcs)</strong>
+                                        {p.price && p.price > 0 ? ` - ₦${p.price.toLocaleString()}` : ''}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {dishLineTotal > 0 && (
+                                <div className="pt-2 mt-2 border-t border-gray-800/80 flex justify-between items-center text-[11px] font-mono">
+                                  <span className="text-gray-400">Dish Subtotal:</span>
+                                  <span className="text-amber-300 font-bold">₦{dishLineTotal.toLocaleString()}</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
@@ -575,7 +612,7 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
 
                       return (
                         <div
-                          key={i}
+                          key={`addon-${key}-${i}`}
                           className="p-3 rounded-lg bg-gray-900/50 border border-gray-800 text-xs text-gray-200 flex justify-between items-center"
                         >
                           <span className="capitalize">{key.replace(/([A-Z])/g, ' $1')}</span>
