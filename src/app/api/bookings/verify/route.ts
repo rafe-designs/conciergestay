@@ -61,12 +61,16 @@ export async function POST(request: Request) {
     const resolvedPhone = phone || guestInfo?.phone || '';
     const resolvedGuestCount = Number(guestCount || guestInfo?.guests || 1);
 
+    const nowIso = new Date().toISOString();
+
     const bookingData: Record<string, any> = {
       id: id || crypto.randomUUID(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
       reference: resolvedTxRef,
       paymentReference: resolvedTxRef,
-      checkIn: checkIn ? new Date(checkIn).toISOString() : new Date().toISOString(),
-      checkOut: checkOut ? new Date(checkOut).toISOString() : new Date().toISOString(),
+      checkIn: checkIn ? new Date(checkIn).toISOString() : nowIso,
+      checkOut: checkOut ? new Date(checkOut).toISOString() : nowIso,
       totalNights: Number(totalNights) || 1,
       baseRentTotal: parsedBaseRent,
       servicesTotal: parsedServices,
@@ -74,7 +78,7 @@ export async function POST(request: Request) {
       apartmentCut: Number(apartmentCut ?? parsedBaseRent),
       servicesCut: Number(servicesCut ?? parsedServices),
       platformFee: parsedPlatformFee,
-      platformFeeTotal: parsedPlatformFee, // Added to fulfill non-null constraint
+      platformFeeTotal: parsedPlatformFee,
       status: status || 'Confirmed',
       paymentStatus: paymentStatus || 'Paid',
       customerName: resolvedCustomerName,
