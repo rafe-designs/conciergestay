@@ -22,6 +22,8 @@ export interface Booking {
   pricePerNight?: number;
   totalAmount?: number;
   grandTotal?: number;
+  kitchenTotal?: number;
+  mealTotal?: number;
   dailyMealSelections?: any;
   meals?: any;
   addons?: any;
@@ -76,98 +78,162 @@ const extractNumber = (val: any): number => {
   return 0;
 };
 
-const calculateKitchenItemCost = (itemObj: any): number => {
-  let itemCost = 5000;
-  if (itemObj && typeof itemObj === 'object') {
-    const explicitPrice = itemObj.price || itemObj.amount || itemObj.cost;
-    if (explicitPrice !== undefined) {
-      itemCost = extractNumber(explicitPrice);
-    } else {
-      const proteinRaw = Array.isArray(itemObj.proteinIds) ? itemObj.proteinIds : [];
-      const swallowRaw = Array.isArray(itemObj.swallowIds) ? itemObj.swallowIds : [];
-      itemCost += (proteinRaw.length + swallowRaw.length) * 1000;
-    }
+const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalCost: number } => {
+  const addons = parseJson(booking?.addons);
+  const mealsObj = parseJson(booking?.dailyMealSelections || booking?.meals || addons?.kitchen || addons?.food || addons?.meals);
+
+  // Exact overarching total calculated directly on frontend selection
+  const explicitTotal = extractNumber(
+    booking?.kitchenTotal ||
+    booking?.mealTotal ||
+    booking?.mealsPrice ||
+    booking?.foodTotal ||
+    mealsObj?.totalPrice ||
+    mealsObj?.grandTotal ||
+    mealsObj?.total ||
+    mealsObj?.calculatedTotal ||
+    addons?.kitchenTotal ||
+    addons?.mealTotal ||
+    addons?.kitchen?.total
+  );
+
+  const itemNames: string[] = [];
+  let calculatedCost = 0;
+
+  if (!mealsObj || typeof mealsObj !== 'object' || Object.keys(mealsObj).length === 0) {
+    return { names: [], totalCost: explicitTotal };
   }
-  return itemCost;
-};
 
-const deepSum = (obj: any): number => {
-  let sum = 0;
-  if (!obj || typeof obj !== 'object') return sum;
-  if (Array.isArray(obj)) {
-    obj.forEach((item) => { sum += deepSum(item); });
-  } else {
-    const p = obj.price || obj.amount || obj.cost || obj.total;
-    if (p !== undefined) {
-      const qty = extractNumber(obj.qty || obj.quantity || obj.count || 1);
-      sum += extractNumber(p) * (qty > 0 ? qty : 1);
-    } else {
-      if (obj.proteinIds || obj.swallowIds || obj.liters || obj.prepMode || obj.serviceMode || obj.protein || obj.swallow) {
-        sum += calculateKitchenItemCost(obj);
-      }
-      Object.entries(obj).forEach(([key, val]) => {
-        if (!['proteinIds', 'swallowIds'].includes(key)) {
-          sum += deepSum(val);
-        }
-      });
-    }
-  }
-  return sum;
-};
+  const processDishNode = (key: string, dishNode: any) => {
+    if (!dishNode || typeof dishNode !== 'object') return;
 
-const deepExtractMealNames = (obj: any): string[] => {
-  let names: string[] = [];
-  if (!obj || typeof obj !== 'object') return names;
-  
-  if (Array.isArray(obj)) {
-    obj.forEach((item) => names.push(...deepExtractMealNames(item)));
-  } else {
-    for (const [key, val] of Object.entries(obj)) {
-      if (key.match(/^\d{4}-\d{2}-\d{2}$/) || ['meals', 'soups', 'prepModes', 'serviceMode'].includes(key)) {
-        if (key === 'serviceMode') {
-          names.push(`Service Mode: ${String(val).replace(/_/g, ' ')}`);
-        } else {
-          names.push(...deepExtractMealNames(val));
-        }
-      } else if (typeof val === 'object' && val !== null) {
-        const formattedName = key.replace(/_/g, ' ').replace(/^(rc|sp)\s*/i, '');
-        
-        const proteinRaw = Array.isArray((val as any).proteinIds) ? (val as any).proteinIds : [];
-        const proteinCounts: Record<string, number> = {};
-        proteinRaw.forEach((p: string) => {
-          const cleanP = p.replace(/^pr_/, '').replace(/_/g, ' ');
-          proteinCounts[cleanP] = (proteinCounts[cleanP] || 0) + 1;
+    const rawName = dishNode.name || dishNode.title || key;
+    if (!rawName || ['serviceMode', 'prepMode', 'prepModes', 'totalPrice', 'grandTotal'].includes(rawName)) return;
+
+    const dishName = String(rawName)
+      .replace(/^(rc_|sp_|pr_|sw_|p_|s_)/gi, '')
+      .replace(/_/g, ' ')
+      .trim();
+
+    const liters = dishNode.liters ? Number(dishNode.liters) : undefined;
+    
+    // Extract exact price submitted for this dish from frontend
+    const dishPrice = extractNumber(
+      dishNode.price || dishNode.amount || dishNode.cost || dishNode.totalPrice || dishNode.total || dishNode.basePrice
+    );
+    calculatedCost += dishPrice;
+
+    let dishLabel = dishName.toLowerCase();
+    if (liters) dishLabel += ` (${liters}L)`;
+    if (dishPrice > 0) dishLabel += ` - ₦${dishPrice.toLocaleString()}`;
+    itemNames.push(dishLabel);
+
+    // Swallows
+    const swallow = dishNode.swallow || dishNode.swallows || dishNode.swallowId;
+    if (swallow) {
+      if (typeof swallow === 'string') {
+        const cleanSwallow = swallow.replace(/^sw_/, '').replace(/_/g, ' ').trim().toLowerCase();
+        itemNames.push(`swallow: ${cleanSwallow}`);
+      } else if (Array.isArray(swallow)) {
+        swallow.forEach((s) => {
+          if (typeof s === 'string') {
+            itemNames.push(`swallow: ${s.replace(/^sw_/, '').replace(/_/g, ' ').trim().toLowerCase()}`);
+          } else if (typeof s === 'object' && s !== null) {
+            const sName = String(s.name || s.title || s.id || 'swallow').replace(/^sw_/, '').replace(/_/g, ' ').trim().toLowerCase();
+            const sPrice = extractNumber(s.price || s.amount || s.cost);
+            if (sPrice > 0) calculatedCost += sPrice;
+            itemNames.push(`swallow: ${sName}${sPrice > 0 ? ` (₦${sPrice.toLocaleString()})` : ''}`);
+          }
         });
-        const proteinParts = Object.entries(proteinCounts).map(([prot, count]) => count > 1 ? `${prot} - ${count}pcs` : `${prot} - 1pc`);
-
-        const swallowRaw = Array.isArray((val as any).swallowIds) ? (val as any).swallowIds : [];
-        const swallowCounts: Record<string, number> = {};
-        swallowRaw.forEach((s: string) => {
-          const cleanS = s.replace(/^sw_/, '').replace(/_/g, ' ');
-          swallowCounts[cleanS] = (swallowCounts[cleanS] || 0) + 1;
-        });
-        const swallowParts = Object.entries(swallowCounts).map(([swal, count]) => count > 1 ? `${swal} - ${count} wraps` : `${swal} - 1 wrap`);
-
-        let detail = formattedName;
-        if ((val as any).liters) detail += ` (${(val as any).liters}L)`;
-        if ((val as any).prepMode) detail += ` [Prep: ${String((val as any).prepMode).replace(/_/g, ' ')}]`;
-        if ((val as any).serviceMode) detail += ` [Service: ${String((val as any).serviceMode).replace(/_/g, ' ')}]`;
-        if (proteinParts.length > 0) detail += ` [Proteins: ${proteinParts.join(', ')}]`;
-        if (swallowParts.length > 0) detail += ` [Swallow: ${swallowParts.join(', ')}]`;
-        
-        names.push(detail);
-      } else if (typeof val === 'string' || typeof val === 'number') {
-        if (key === 'serviceMode' || key === 'prepMode') {
-          names.push(`${key.replace(/_/g, ' ')}: ${String(val).replace(/_/g, ' ')}`);
-        } else if (!['in_house', 'delivery'].includes(String(val))) {
-          names.push(`${key.replace(/_/g, ' ')}: ${val}`);
-        } else {
-          names.push(`Service Mode: ${String(val).replace(/_/g, ' ')}`);
-        }
+      } else if (typeof swallow === 'object' && swallow !== null) {
+        const sName = String(swallow.name || swallow.title || swallow.id || 'swallow').replace(/^sw_/, '').replace(/_/g, ' ').trim().toLowerCase();
+        const sPrice = extractNumber(swallow.price || swallow.amount || swallow.cost);
+        if (sPrice > 0) calculatedCost += sPrice;
+        itemNames.push(`swallow: ${sName}${sPrice > 0 ? ` (₦${sPrice.toLocaleString()})` : ''}`);
       }
     }
-  }
-  return names;
+
+    // Proteins & Add-ons (Exact frontend quantities and prices)
+    const rawProteins = dishNode.proteinAddons || dishNode.proteins || dishNode.proteinIds || dishNode.selectedProteins || dishNode.protein;
+    if (rawProteins) {
+      if (Array.isArray(rawProteins)) {
+        const proteinCounts: Record<string, { qty: number; price: number }> = {};
+
+        rawProteins.forEach((p) => {
+          if (typeof p === 'string') {
+            const cleanP = p.replace(/^pr_/, '').replace(/_/g, ' ').trim().toLowerCase();
+            if (!proteinCounts[cleanP]) proteinCounts[cleanP] = { qty: 0, price: 0 };
+            proteinCounts[cleanP].qty += 1;
+          } else if (typeof p === 'object' && p !== null) {
+            const cleanP = String(p.name || p.id || p.title || 'protein').replace(/^pr_/, '').replace(/_/g, ' ').trim().toLowerCase();
+            const qty = extractNumber(p.qty || p.quantity || p.count || 1);
+            const price = extractNumber(p.price || p.amount || p.total || p.cost);
+            if (!proteinCounts[cleanP]) proteinCounts[cleanP] = { qty: 0, price: 0 };
+            proteinCounts[cleanP].qty += qty;
+            proteinCounts[cleanP].price += price;
+          }
+        });
+
+        Object.entries(proteinCounts).forEach(([pName, info]) => {
+          calculatedCost += info.price;
+          const priceLabel = info.price > 0 ? ` - ₦${info.price.toLocaleString()}` : '';
+          itemNames.push(`${pName} (${info.qty} pcs)${priceLabel}`);
+        });
+      } else if (typeof rawProteins === 'object') {
+        Object.entries(rawProteins).forEach(([pKey, pVal]: [string, any]) => {
+          const cleanP = pKey.replace(/^pr_/, '').replace(/_/g, ' ').trim().toLowerCase();
+          let qty = 1;
+          let price = 0;
+          if (typeof pVal === 'number') {
+            price = pVal;
+          } else if (typeof pVal === 'object' && pVal !== null) {
+            qty = extractNumber(pVal.qty || pVal.quantity || pVal.count || 1);
+            price = extractNumber(pVal.price || pVal.amount || pVal.total || pVal.cost);
+          }
+          calculatedCost += price;
+          const priceLabel = price > 0 ? ` - ₦${price.toLocaleString()}` : '';
+          itemNames.push(`${cleanP} (${qty} pcs)${priceLabel}`);
+        });
+      }
+    }
+  };
+
+  const traverse = (node: any) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      node.forEach((item) => traverse(item));
+      return;
+    }
+
+    Object.entries(node).forEach(([key, val]) => {
+      if (['prepModes', 'prep_modes', 'serviceMode', 'totalPrice', 'grandTotal'].includes(key)) return;
+
+      const parsedVal = parseJson(val);
+      if (typeof parsedVal === 'object' && parsedVal !== null) {
+        const isDish =
+          parsedVal.name ||
+          parsedVal.title ||
+          parsedVal.proteinIds ||
+          parsedVal.proteinAddons ||
+          parsedVal.proteins ||
+          parsedVal.liters ||
+          parsedVal.swallow ||
+          parsedVal.swallows;
+
+        if (isDish) {
+          processDishNode(key, parsedVal);
+        } else {
+          traverse(parsedVal);
+        }
+      }
+    });
+  };
+
+  traverse(mealsObj);
+
+  // Strictly use explicit frontend calculated total if available, otherwise exact sum of item selection prices
+  const finalTotal = explicitTotal > 0 ? explicitTotal : calculatedCost;
+  return { names: Array.from(new Set(itemNames)), totalCost: finalTotal };
 };
 
 const calculateSingleBookingDeptRevenue = (b: Booking, config: DeptConfig): number => {
@@ -177,58 +243,34 @@ const calculateSingleBookingDeptRevenue = (b: Booking, config: DeptConfig): numb
     return b.departmentalBreakdown[config.id];
   }
 
+  if (config.id === 'kitchen') {
+    const { totalCost } = parseKitchenDetailsAndCost(b);
+    return totalCost;
+  }
+
   let fallbackRev = 0;
   const addons = parseJson(b?.addons);
-  const mealsObj = parseJson(b?.dailyMealSelections || b?.meals);
   const nights = Math.max(1, Number(b?.totalNights) || 1);
 
-  if (config.id === 'kitchen') {
-    fallbackRev += deepSum(mealsObj);
-    if (fallbackRev === 0) fallbackRev += deepSum(addons?.kitchen || addons?.food || addons?.meals);
-    
-    if (fallbackRev === 0 && Object.keys(mealsObj).length > 0) {
-      const helperWalk = (node: any) => {
-        let count = 0;
-        if (!node || typeof node !== 'object') return 0;
-        if (Array.isArray(node)) {
-          node.forEach(item => count += helperWalk(item));
-        } else {
-          for (const [k, v] of Object.entries(node)) {
-            if (k.match(/^\d{4}-\d{2}-\d{2}$/) || ['meals', 'soups', 'prepModes', 'serviceMode'].includes(k)) {
-              count += helperWalk(v);
-            } else if (v && typeof v === 'object') {
-              count += calculateKitchenItemCost(v);
-            }
-          }
-        }
-        return count;
-      };
-      fallbackRev = helperWalk(mealsObj);
-    }
-  } else if (config.id === 'chauffeur') {
+  if (config.id === 'chauffeur') {
     const c = addons?.chauffeur || addons?.chauffeurService;
     if (c && !['None', 'false'].includes(String(c))) {
       const rate = extractNumber(c?.baseRate || c?.price || c?.amount);
-      fallbackRev = rate > 0 ? rate * nights : deepSum(c);
+      fallbackRev = rate > 0 ? rate * nights : 0;
     }
   } else if (config.id === 'airport') {
     const a = addons?.airport || addons?.airportTransfer;
     if (a && !['None', 'false'].includes(String(a))) {
       const rate = extractNumber(a?.baseRate || a?.price || a?.amount);
       const mult = String(a?.tripType || a?.direction).toLowerCase().includes('round') ? 2 : 1;
-      fallbackRev = rate > 0 ? rate * mult : deepSum(a);
+      fallbackRev = rate > 0 ? rate * mult : 0;
     }
   } else if (config.id === 'security' || config.id === 'shopper') {
     const s = addons?.[config.id] || addons?.[`${config.id}Service`] || addons?.personalShopper || addons?.securityType;
     if (s && !['None', 'No Additional Security', 'false'].includes(String(s))) {
       const rate = extractNumber(s?.baseRate || s?.price || s?.amount);
       const count = extractNumber(s?.count || s?.guards || s?.shoppers || 1);
-      fallbackRev = rate > 0 ? rate * count * nights : deepSum(s);
-    }
-  } else {
-    const targetAddon = addons?.[config.id] || addons?.[config.keywords[1]] || addons?.[config.keywords[0]];
-    if (targetAddon && !['None', 'No Housekeeping Service', 'Standard (No Daily Change)', 'false'].includes(String(targetAddon))) {
-      fallbackRev += deepSum(targetAddon);
+      fallbackRev = rate > 0 ? rate * count * nights : 0;
     }
   }
 
@@ -504,19 +546,19 @@ function RenderDepartmentDetails({ configId, booking, addons }: { configId: Depa
   );
 
   if (configId === 'kitchen') {
-    const rawMeals = booking?.dailyMealSelections || booking?.meals || addons?.kitchen || addons?.food || addons?.meals;
-    const meals = parseJson(rawMeals);
-    const selectedMealList = Array.from(new Set(deepExtractMealNames(meals)));
-    
+    const { names, totalCost } = parseKitchenDetailsAndCost(booking);
+
     return (
       <div className="text-xs text-gray-300 space-y-1">
         <span className="text-gray-400 block mb-1 font-medium">Found Items:</span>
-        {selectedMealList.length > 0 ? (
-          <ul className="list-disc list-inside space-y-1 text-cyan-300 max-h-32 overflow-y-auto">
-            {selectedMealList.map((m, i) => <li key={i}>{m}</li>)}
+        {names.length > 0 ? (
+          <ul className="list-disc list-inside space-y-1 text-cyan-300 max-h-36 overflow-y-auto">
+            {names.map((m, i) => (
+              <li key={i} className="capitalize">{m}</li>
+            ))}
           </ul>
         ) : (
-          <EmptyMsg msg={deptTotal > 0 ? `Kitchen Allocation (₦${deptTotal.toLocaleString()})` : 'No meal selections saved for this booking.'} />
+          <EmptyMsg msg={totalCost > 0 ? `Kitchen Allocation (₦${totalCost.toLocaleString()})` : 'No meal selections saved for this booking.'} />
         )}
       </div>
     );
