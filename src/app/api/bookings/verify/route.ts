@@ -19,55 +19,38 @@ export async function POST(request: Request) {
     const txRefFromRoot = body?.transactionRef;
 
     const {
-      id,
       reference,
       transactionRef,
       listingId,
       apartmentTitle,
-      userId,
       customerEmail,
       customerName,
       phone,
       checkIn,
       checkOut,
       totalNights,
-      guestCount,
       guestInfo,
       baseRentTotal,
       stayCost,
       servicesTotal,
       totalConciergePrice,
-      grandTotal,
-      apartmentCut,
-      platformFee,
-      conciergeCut,
-      kitchenCut,
-      totalMealPrice,
       diningTotal,
-      servicesCut,
-      dailyMealSelections,
-      parsedMeals,
-      addons,
-      activeAddons,
+      grandTotal,
       status,
-      paymentStatus,
     } = raw || {};
 
-    const resolvedTxRef = txRefFromRoot || transactionRef || reference;
+    const resolvedTxRef = txRefFromRoot || transactionRef || reference || `CS_REF_${Date.now()}`;
     const parsedBaseRent = Number(baseRentTotal ?? stayCost ?? 0);
     const parsedServices = Number(servicesTotal ?? diningTotal ?? totalConciergePrice ?? 0);
     const parsedGrandTotal = Number(grandTotal ?? 0);
-    const bookingRef = resolvedTxRef || id || `CS_REF_${Date.now()}`;
 
-    const resolvedCustomerName = customerName || guestInfo?.fullName;
-    const resolvedCustomerEmail = customerEmail || guestInfo?.email;
-    const resolvedPhone = phone || guestInfo?.phone;
-    const resolvedGuestCount = Number(guestCount || guestInfo?.guests || 1);
+    const resolvedCustomerName = customerName || guestInfo?.fullName || '';
+    const resolvedCustomerEmail = customerEmail || guestInfo?.email || '';
+    const resolvedPhone = phone || guestInfo?.phone || '';
 
-    // Map properties directly to your Supabase camelCase columns
+    // Core safe columns guaranteed to exist or match default setups
     const bookingData: Record<string, any> = {
-      reference: bookingRef,
-      paymentReference: bookingRef,
+      reference: resolvedTxRef,
       checkIn: checkIn ? new Date(checkIn).toISOString() : new Date().toISOString(),
       checkOut: checkOut ? new Date(checkOut).toISOString() : new Date().toISOString(),
       totalNights: Number(totalNights) || 1,
@@ -75,17 +58,13 @@ export async function POST(request: Request) {
       servicesTotal: parsedServices,
       grandTotal: parsedGrandTotal,
       status: status || 'Confirmed',
-      paymentStatus: paymentStatus || 'Paid',
-      customerName: resolvedCustomerName || '',
-      customerEmail: resolvedCustomerEmail || '',
-      phone: resolvedPhone || '',
+      customerName: resolvedCustomerName,
+      customerEmail: resolvedCustomerEmail,
+      phone: resolvedPhone,
     };
 
-    if (id) bookingData.id = id;
-
-    // Note: Change 'Booking' to 'bookings' if your table name is lowercase in Supabase
     let { data: newBooking, error } = await supabase
-      .from('Booking') 
+      .from('Booking')
       .insert([bookingData])
       .select()
       .single();
