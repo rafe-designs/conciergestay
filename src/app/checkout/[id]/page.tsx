@@ -3,6 +3,7 @@
 import React, { useState, useMemo, use, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import PaystackPop from '@paystack/inline-js';
 import {
   LISTINGS,
   CULINARY_MEALS,
@@ -93,19 +94,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     if (stayDates.includes(selectedDayTab)) return selectedDayTab;
     return stayDates[0] || '';
   }, [stayDates, selectedDayTab]);
-
-  // Load Paystack Inline Script Dynamically
-  useEffect(() => {
-    const script = document.createElement('script');
-    script.src = 'https://js.paystack.co/v1/inline.js';
-    script.async = true;
-    document.body.appendChild(script);
-    return () => {
-      if (document.body.contains(script)) {
-        document.body.removeChild(script);
-      }
-    };
-  }, []);
 
   // Combined options list for calculating total soup/spiced food prices
   const ALL_SOUP_AND_COMFORT_OPTIONS = useMemo(() => {
@@ -336,7 +324,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   const activePrepMode = dailyPrepModes[activeDay] || 'delivery';
   const chefSurcharge = activePrepMode === 'in_house' ? 20000 : 0;
 
-  // Paystack Popup Handler
+  // Paystack Popup Handler using Official Package Class
   const handlePaystackPayment = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -351,106 +339,103 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     }
 
     const paystackKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || 'pk_test_placeholder';
-
-    if (typeof window === 'undefined' || !(window as unknown as { PaystackPop?: any }).PaystackPop) {
-      alert('Paystack SDK failed to load. Please check your internet connection.');
-      return;
-    }
-
-    // Generate reference with the exact 'CS_' prefix matching your backend expectation
     const uniqueTxRef = 'CS_' + Math.floor(Math.random() * 1000000000 + 1);
 
-    const handler = (window as unknown as { PaystackPop: any }).PaystackPop.setup({
-      key: paystackKey,
-      email: email,
-      amount: totals.totalDue * 100,
-      currency: 'NGN',
-      ref: uniqueTxRef,
-      metadata: {
-        custom_fields: [
-          { display_name: 'Full Name', variable_name: 'full_name', value: fullName },
-          { display_name: 'Phone Number', variable_name: 'phone_number', value: phone },
-          { display_name: 'Guests', variable_name: 'guests', value: guests },
-          { display_name: 'Stay Duration', variable_name: 'stay_duration', value: `${nights} Nights (${checkInDate} to ${checkOutDate})` },
-        ],
-      },
-      callback: async function (response: { reference: string }) {
-        const finalRef = response.reference || uniqueTxRef;
+    try {
+      const paystack = new PaystackPop();
+      paystack.newTransaction({
+        key: paystackKey,
+        email: email,
+        amount: totals.totalDue * 100,
+        currency: 'NGN',
+        ref: uniqueTxRef,
+        metadata: {
+          custom_fields: [
+            { display_name: 'Full Name', variable_name: 'full_name', value: fullName },
+            { display_name: 'Phone Number', variable_name: 'phone_number', value: phone },
+            { display_name: 'Guests', variable_name: 'guests', value: guests },
+            { display_name: 'Stay Duration', variable_name: 'stay_duration', value: `${nights} Nights (${checkInDate} to ${checkOutDate})` },
+          ],
+        },
+        onSuccess: async (response: { reference: string }) => {
+          const finalRef = response.reference || uniqueTxRef;
 
-        const payload = {
-          transactionRef: finalRef,
-          listingId: resolvedParams.id,
-          apartmentTitle: listing.title,
-          checkIn: checkInDate,
-          checkOut: checkOutDate,
-          totalNights: nights,
-          baseRentTotal: totals.accommodation,
-          diningTotal: totals.diningTotal,
-          conciergeTotal: totals.conciergeTotal,
-          servicesTotal: totals.diningTotal + totals.conciergeTotal,
-          grandTotal: totals.totalDue,
-          apartmentCut: totals.accommodation,
-          servicesCut: totals.diningTotal + totals.conciergeTotal,
-          guestInfo: {
-            fullName,
-            email,
-            phone,
-            guests,
-          },
-          dailyMealSelections: {
-            meals: dailyMeals,
-            soups: dailySoups,
-            prepModes: dailyPrepModes,
-          },
-          addons: {
-            airportTransferType,
-            airportTripDirection,
-            chauffeurService,
-            securityService,
-            securityCount,
-            shoppersCount,
-            laundryAdult,
-            laundryKid,
-            laundrySuit,
-            housekeepingActive,
-            housekeepingSchedule,
-            beddingBeddings,
-            beddingTowels,
-          },
-        };
+          const payload = {
+            transactionRef: finalRef,
+            listingId: resolvedParams.id,
+            apartmentTitle: listing.title,
+            checkIn: checkInDate,
+            checkOut: checkOutDate,
+            totalNights: nights,
+            baseRentTotal: totals.accommodation,
+            diningTotal: totals.diningTotal,
+            conciergeTotal: totals.conciergeTotal,
+            servicesTotal: totals.diningTotal + totals.conciergeTotal,
+            grandTotal: totals.totalDue,
+            apartmentCut: totals.accommodation,
+            servicesCut: totals.diningTotal + totals.conciergeTotal,
+            guestInfo: {
+              fullName,
+              email,
+              phone,
+              guests,
+            },
+            dailyMealSelections: {
+              meals: dailyMeals,
+              soups: dailySoups,
+              prepModes: dailyPrepModes,
+            },
+            addons: {
+              airportTransferType,
+              airportTripDirection,
+              chauffeurService,
+              securityService,
+              securityCount,
+              shoppersCount,
+              laundryAdult,
+              laundryKid,
+              laundrySuit,
+              housekeepingActive,
+              housekeepingSchedule,
+              beddingBeddings,
+              beddingTowels,
+            },
+          };
 
-        localStorage.setItem('booking_confirmation_payload', JSON.stringify(payload));
+          localStorage.setItem('booking_confirmation_payload', JSON.stringify(payload));
 
-        try {
-          const res = await fetch('/api/bookings/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              transactionRef: finalRef,
-              bookingData: payload,
-            }),
-          });
+          try {
+            const res = await fetch('/api/bookings/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                transactionRef: finalRef,
+                bookingData: payload,
+              }),
+            });
 
-          const data = await res.json();
+            const data = await res.json();
 
-          if (!res.ok) {
-            console.error('Server error saving booking:', data);
-            alert(`Payment successful, but saving booking failed: ${data.message || data.error}`);
-            return;
+            if (!res.ok) {
+              console.error('Server error saving booking:', data);
+              alert(`Payment successful, but saving booking failed: ${data.message || data.error}`);
+              return;
+            }
+
+            router.push(`/booking-success?reference=${finalRef}&listing=${resolvedParams.id}`);
+          } catch (err) {
+            console.error('Network error during booking sync:', err);
+            alert('Payment successful, but a network error occurred while recording your booking.');
           }
-
-          router.push(`/booking-success?reference=${finalRef}&listing=${resolvedParams.id}`);
-        } catch (err) {
-          console.error('Network error during booking sync:', err);
-          alert('Payment successful, but a network error occurred while recording your booking.');
-        }
-      },
-      onClose: function () {
-        alert('Transaction was closed.');
-      },
-    });
-
-    handler.openIframe();
+        },
+        onCancel: () => {
+          alert('Transaction was closed.');
+        },
+      });
+    } catch (err) {
+      console.error('Paystack initialization error:', err);
+      alert('Failed to load the payment gateway. Please check your internet connection.');
+    }
   };
 
   return (
