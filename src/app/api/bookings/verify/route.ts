@@ -5,6 +5,82 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+function sanitizeAddons(rawAddons: any): Record<string, any> {
+  if (!rawAddons || typeof rawAddons !== 'object') return {};
+
+  const sanitized: Record<string, any> = {};
+
+  // Security Filter
+  const sec = rawAddons.security || rawAddons.securityType || rawAddons.securityService;
+  if (sec && !['None', 'No Additional Security', 'false'].includes(String(sec))) {
+    sanitized.security = sec;
+    if (rawAddons.securityCount || rawAddons.guards) {
+      sanitized.securityCount = Number(rawAddons.securityCount || rawAddons.guards || 1);
+    }
+  }
+
+  // Airport Transfer Filter
+  const airport = rawAddons.airport || rawAddons.airportTransfer;
+  if (airport && !['None', 'No Airport Transfer', 'false'].includes(String(airport))) {
+    sanitized.airport = airport;
+    if (rawAddons.airportDirection || rawAddons.direction || rawAddons.tripType) {
+      sanitized.airportDirection = rawAddons.airportDirection || rawAddons.direction || rawAddons.tripType;
+    }
+  }
+
+  // Housekeeping Filter
+  const hk = rawAddons.housekeeping || rawAddons.housekeepingService;
+  if (hk && !['None', 'No Housekeeping Service', 'false'].includes(String(hk))) {
+    sanitized.housekeeping = hk;
+    if (rawAddons.housekeepingSchedule || rawAddons.frequency) {
+      sanitized.housekeepingSchedule = rawAddons.housekeepingSchedule || rawAddons.frequency;
+    }
+  }
+
+  // Chauffeur Filter
+  const chauffeur = rawAddons.chauffeur || rawAddons.chauffeurService;
+  if (chauffeur && !['None', 'No Chauffeur Service', 'false'].includes(String(chauffeur))) {
+    sanitized.chauffeur = chauffeur;
+  }
+
+  // Laundry Filter
+  const laundry = rawAddons.laundry || rawAddons.drycleaning;
+  if (laundry && typeof laundry === 'object') {
+    const totalPcs = (Number(laundry.adult) || 0) + (Number(laundry.kid) || 0) + (Number(laundry.suit) || 0);
+    if (totalPcs > 0) sanitized.laundry = laundry;
+  }
+
+  // Beddings & Linen Filter
+  const beddings = rawAddons.beddings || rawAddons.linen;
+  const beddingSel = typeof beddings === 'object' ? beddings.selection : beddings;
+  if (beddings && !['None', 'Standard (No Daily Change)', 'false'].includes(String(beddingSel))) {
+    sanitized.beddings = beddings;
+  }
+
+  // Personal Shopper Filter
+  const shopper = rawAddons.shopper || rawAddons.personalShopper;
+  if (shopper && !['None', 'false'].includes(String(shopper))) {
+    sanitized.shopper = shopper;
+  }
+
+  // Copy remaining non-default custom fields
+  Object.entries(rawAddons).forEach(([key, value]) => {
+    const isHandledKey = [
+      'security', 'securityType', 'securityService', 'securityCount', 'guards',
+      'airport', 'airportTransfer', 'airportDirection', 'direction', 'tripType',
+      'housekeeping', 'housekeepingService', 'housekeepingSchedule', 'frequency',
+      'chauffeur', 'chauffeurService', 'laundry', 'drycleaning',
+      'beddings', 'linen', 'shopper', 'personalShopper'
+    ].includes(key);
+
+    if (!isHandledKey && value && value !== 'None' && value !== false && value !== 'No Additional Security' && value !== 'No Housekeeping Service') {
+      sanitized[key] = value;
+    }
+  });
+
+  return sanitized;
+}
+
 export async function POST(request: Request) {
   try {
     let body;
@@ -62,6 +138,7 @@ export async function POST(request: Request) {
     const resolvedGuestCount = Number(guestCount || guestInfo?.guests || 1);
 
     const nowIso = new Date().toISOString();
+    const sanitizedAddons = sanitizeAddons(addons || activeAddons || {});
 
     const bookingData: Record<string, any> = {
       id: id || crypto.randomUUID(),
@@ -88,7 +165,7 @@ export async function POST(request: Request) {
       apartmentTitle: apartmentTitle || '',
       listingId: listingId || '',
       dailyMealSelections: dailyMealSelections || parsedMeals || [],
-      addons: addons || activeAddons || {},
+      addons: sanitizedAddons,
     };
 
     let { data: newBooking, error } = await supabase

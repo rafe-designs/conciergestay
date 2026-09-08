@@ -76,9 +76,8 @@ const extractNumber = (val: any): number => {
   return 0;
 };
 
-// Accurately calculates kitchen cost: Base soup/meal = ₦5,000, each protein/swallow add-on = ₦1,000
 const calculateKitchenItemCost = (itemObj: any): number => {
-  let itemCost = 5000; // Realistic base price per meal bowl/soup
+  let itemCost = 5000;
   if (itemObj && typeof itemObj === 'object') {
     const explicitPrice = itemObj.price || itemObj.amount || itemObj.cost;
     if (explicitPrice !== undefined) {
@@ -133,7 +132,6 @@ const deepExtractMealNames = (obj: any): string[] => {
       } else if (typeof val === 'object' && val !== null) {
         const formattedName = key.replace(/_/g, ' ').replace(/^(rc|sp)\s*/i, '');
         
-        // Count proteins e.g., (beef - 2pcs)
         const proteinRaw = Array.isArray((val as any).proteinIds) ? (val as any).proteinIds : [];
         const proteinCounts: Record<string, number> = {};
         proteinRaw.forEach((p: string) => {
@@ -142,7 +140,6 @@ const deepExtractMealNames = (obj: any): string[] => {
         });
         const proteinParts = Object.entries(proteinCounts).map(([prot, count]) => count > 1 ? `${prot} - ${count}pcs` : `${prot} - 1pc`);
 
-        // Count swallows e.g., (eba - 2 wraps)
         const swallowRaw = Array.isArray((val as any).swallowIds) ? (val as any).swallowIds : [];
         const swallowCounts: Record<string, number> = {};
         swallowRaw.forEach((s: string) => {
@@ -210,21 +207,29 @@ const calculateSingleBookingDeptRevenue = (b: Booking, config: DeptConfig): numb
     }
   } else if (config.id === 'chauffeur') {
     const c = addons?.chauffeur || addons?.chauffeurService;
-    const rate = extractNumber(c?.baseRate || c?.price || c?.amount);
-    fallbackRev = rate > 0 ? rate * nights : deepSum(c);
+    if (c && !['None', 'false'].includes(String(c))) {
+      const rate = extractNumber(c?.baseRate || c?.price || c?.amount);
+      fallbackRev = rate > 0 ? rate * nights : deepSum(c);
+    }
   } else if (config.id === 'airport') {
     const a = addons?.airport || addons?.airportTransfer;
-    const rate = extractNumber(a?.baseRate || a?.price || a?.amount);
-    const mult = String(a?.tripType || a?.direction).toLowerCase().includes('round') ? 2 : 1;
-    fallbackRev = rate > 0 ? rate * mult : deepSum(a);
+    if (a && !['None', 'false'].includes(String(a))) {
+      const rate = extractNumber(a?.baseRate || a?.price || a?.amount);
+      const mult = String(a?.tripType || a?.direction).toLowerCase().includes('round') ? 2 : 1;
+      fallbackRev = rate > 0 ? rate * mult : deepSum(a);
+    }
   } else if (config.id === 'security' || config.id === 'shopper') {
-    const s = addons?.[config.id] || addons?.[`${config.id}Service`] || addons?.personalShopper;
-    const rate = extractNumber(s?.baseRate || s?.price || s?.amount);
-    const count = extractNumber(s?.count || s?.guards || s?.shoppers || 1);
-    fallbackRev = rate > 0 ? rate * count * nights : deepSum(s);
+    const s = addons?.[config.id] || addons?.[`${config.id}Service`] || addons?.personalShopper || addons?.securityType;
+    if (s && !['None', 'No Additional Security', 'false'].includes(String(s))) {
+      const rate = extractNumber(s?.baseRate || s?.price || s?.amount);
+      const count = extractNumber(s?.count || s?.guards || s?.shoppers || 1);
+      fallbackRev = rate > 0 ? rate * count * nights : deepSum(s);
+    }
   } else {
     const targetAddon = addons?.[config.id] || addons?.[config.keywords[1]] || addons?.[config.keywords[0]];
-    fallbackRev += deepSum(targetAddon);
+    if (targetAddon && !['None', 'No Housekeeping Service', 'Standard (No Daily Change)', 'false'].includes(String(targetAddon))) {
+      fallbackRev += deepSum(targetAddon);
+    }
   }
 
   return fallbackRev;
@@ -360,7 +365,7 @@ const TabButton = ({ label, isActive, onClick }: { label: string; isActive: bool
   </button>
 );
 
-function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQuery, totalRevenue, departmentData, departmentRevenues }: any) {
+function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQuery, totalRevenue, departmentData }: any) {
   const topListings = Object.entries(filteredBookings.reduce((acc: any, b: any) => {
     const l = b?.listingId || 'Standard Suite';
     acc[l] = (acc[l] || 0) + 1;
@@ -486,7 +491,17 @@ function DepartmentSection({ config, bookings, revenue }: { config: DeptConfig; 
 function RenderDepartmentDetails({ configId, booking, addons }: { configId: DepartmentKey; booking: Booking; addons: any }) {
   const deptTotal = calculateSingleBookingDeptRevenue(booking, DEPARTMENT_CONFIGS.find(c => c.id === configId)!);
   const durationStr = `${booking?.totalNights || 1} Nights`;
-  const Row = ({ label, val }: any) => <div className="flex justify-between"><span className="text-gray-400">{label}</span><span className="font-semibold text-cyan-300">{val}</span></div>;
+
+  const Row = ({ label, val }: any) => (
+    <div className="flex justify-between text-xs">
+      <span className="text-gray-400">{label}</span>
+      <span className="font-semibold text-cyan-300">{val}</span>
+    </div>
+  );
+
+  const EmptyMsg = ({ msg }: { msg: string }) => (
+    <span className="text-xs text-gray-500 italic block">{msg}</span>
+  );
 
   if (configId === 'kitchen') {
     const rawMeals = booking?.dailyMealSelections || booking?.meals || addons?.kitchen || addons?.food || addons?.meals;
@@ -495,47 +510,127 @@ function RenderDepartmentDetails({ configId, booking, addons }: { configId: Depa
     
     return (
       <div className="text-xs text-gray-300 space-y-1">
-        <span className="text-gray-400 block mb-1">Found Items:</span>
+        <span className="text-gray-400 block mb-1 font-medium">Found Items:</span>
         {selectedMealList.length > 0 ? (
           <ul className="list-disc list-inside space-y-1 text-cyan-300 max-h-32 overflow-y-auto">
             {selectedMealList.map((m, i) => <li key={i}>{m}</li>)}
           </ul>
         ) : (
-          <span className="text-cyan-300 font-mono">
-            {deptTotal > 0 ? `Kitchen Allocation (₦${deptTotal.toLocaleString()})` : 'No specific daily meals recorded'}
-          </span>
+          <EmptyMsg msg={deptTotal > 0 ? `Kitchen Allocation (₦${deptTotal.toLocaleString()})` : 'No meal selections saved for this booking.'} />
         )}
       </div>
     );
   }
 
   if (configId === 'housekeeping') {
-    const hk = addons.housekeeping || addons.housekeepingService || {};
-    return <div className="space-y-1.5 text-xs"><Row label="Frequency:" val={hk.frequency || 'Daily'} /><Row label="Stay:" val={durationStr} /><Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} /></div>;
+    const hk = addons?.housekeeping || addons?.housekeepingService;
+    const isNone = !hk || ['None', 'No Housekeeping Service', 'false'].includes(String(hk));
+    if (isNone && deptTotal === 0) return <EmptyMsg msg="No housekeeping service selected." />;
+
+    const freq = typeof hk === 'object' ? (hk.frequency || hk.schedule) : (addons?.housekeepingSchedule || 'Daily');
+    return (
+      <div className="space-y-1.5 text-xs">
+        <Row label="Service:" val={typeof hk === 'string' ? hk : 'Housekeeping Requested'} />
+        <Row label="Frequency:" val={freq} />
+        <Row label="Stay:" val={durationStr} />
+        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
+      </div>
+    );
   }
+
   if (configId === 'chauffeur') {
-    const c = addons.chauffeur || addons.chauffeurService || {};
-    return <div className="space-y-1.5 text-xs"><Row label="Vehicle:" val={c.car || c.vehicle || 'Luxury Sedan'} /><Row label="Stay:" val={durationStr} /><Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} /></div>;
+    const c = addons?.chauffeur || addons?.chauffeurService;
+    const isNone = !c || ['None', 'No Chauffeur Service', 'false'].includes(String(c));
+    if (isNone && deptTotal === 0) return <EmptyMsg msg="No chauffeur service selected." />;
+
+    const vehicle = typeof c === 'object' ? (c.car || c.vehicle || 'Luxury Sedan') : String(c);
+    return (
+      <div className="space-y-1.5 text-xs">
+        <Row label="Vehicle:" val={vehicle} />
+        <Row label="Stay:" val={durationStr} />
+        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
+      </div>
+    );
   }
+
   if (configId === 'airport') {
-    const a = addons.airport || addons.airportTransfer || {};
-    return <div className="space-y-1.5 text-xs"><Row label="Car:" val={a.car || 'Executive SUV'} /><Row label="Direction:" val={a.direction || a.tripType || 'One-Way'} /><Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} /></div>;
+    const a = addons?.airport || addons?.airportTransfer;
+    const isNone = !a || ['None', 'No Airport Transfer', 'false'].includes(String(a));
+    if (isNone && deptTotal === 0) return <EmptyMsg msg="No airport transfer selected." />;
+
+    const car = typeof a === 'object' ? (a.car || 'Executive SUV') : 'Executive SUV';
+    const dir = typeof a === 'object' ? (a.direction || a.tripType) : (addons?.airportDirection || 'One-Way');
+    return (
+      <div className="space-y-1.5 text-xs">
+        <Row label="Car:" val={car} />
+        <Row label="Direction:" val={String(dir).replace(/_/g, ' ')} />
+        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
+      </div>
+    );
   }
+
   if (configId === 'security') {
-    const s = addons.security || addons.securityService || {};
-    return <div className="space-y-1.5 text-xs"><Row label="Personnel:" val={`${Number(s.count || s.guards || 1)} Guards`} /><Row label="Stay:" val={durationStr} /><Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} /></div>;
+    const s = addons?.security || addons?.securityService || addons?.securityType;
+    const isNone = !s || ['None', 'No Additional Security', 'false'].includes(String(s));
+    if (isNone && deptTotal === 0) return <EmptyMsg msg="No additional security selected." />;
+
+    const count = typeof s === 'object' ? (s.count || s.guards || 1) : (addons?.securityCount || 1);
+    return (
+      <div className="space-y-1.5 text-xs">
+        <Row label="Detail:" val={typeof s === 'string' ? s : 'Dedicated Guard'} />
+        <Row label="Personnel:" val={`${Number(count)} Guard(s)`} />
+        <Row label="Stay:" val={durationStr} />
+        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
+      </div>
+    );
   }
+
   if (configId === 'laundry') {
-    const l = addons.laundry || addons.drycleaning || {};
-    return <div className="space-y-1.5 text-xs"><Row label="Adult Pcs:" val={l.adult || '0'} /><Row label="Kid Pcs:" val={l.kid || '0'} /><Row label="Suit Pcs:" val={l.suit || '0'} /><Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} /></div>;
+    const l = addons?.laundry || addons?.drycleaning;
+    const adult = Number(l?.adult || 0);
+    const kid = Number(l?.kid || 0);
+    const suit = Number(l?.suit || 0);
+    if (adult === 0 && kid === 0 && suit === 0 && deptTotal === 0) return <EmptyMsg msg="No laundry service selected." />;
+
+    return (
+      <div className="space-y-1.5 text-xs">
+        <Row label="Adult Pcs:" val={adult} />
+        <Row label="Kid Pcs:" val={kid} />
+        <Row label="Suit Pcs:" val={suit} />
+        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
+      </div>
+    );
   }
+
   if (configId === 'beddings') {
-    const b = addons.beddings || addons.linen || {};
-    return <div className="space-y-1.5 text-xs"><Row label="Selection:" val={b.selection || b.type || 'Standard'} /><Row label="Stay:" val={durationStr} /><Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} /></div>;
+    const b = addons?.beddings || addons?.linen;
+    const sel = typeof b === 'object' ? (b.selection || b.type) : b;
+    const isNone = !b || ['None', 'Standard (No Daily Change)', 'false'].includes(String(sel));
+    if (isNone && deptTotal === 0) return <EmptyMsg msg="Standard Beddings (No extra change)." />;
+
+    return (
+      <div className="space-y-1.5 text-xs">
+        <Row label="Selection:" val={String(sel)} />
+        <Row label="Stay:" val={durationStr} />
+        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
+      </div>
+    );
   }
+
   if (configId === 'shopper') {
-    const sh = addons.shopper || addons.personalShopper || {};
-    return <div className="space-y-1.5 text-xs"><Row label="Shoppers:" val={Number(sh.count || sh.shoppers || 1)} /><Row label="Stay:" val={durationStr} /><Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} /></div>;
+    const sh = addons?.shopper || addons?.personalShopper;
+    const isNone = !sh || ['None', 'false'].includes(String(sh));
+    if (isNone && deptTotal === 0) return <EmptyMsg msg="No personal shopper selected." />;
+
+    const count = typeof sh === 'object' ? (sh.count || sh.shoppers || 1) : 1;
+    return (
+      <div className="space-y-1.5 text-xs">
+        <Row label="Shoppers:" val={Number(count)} />
+        <Row label="Stay:" val={durationStr} />
+        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
+      </div>
+    );
   }
-  return null;
+
+  return <EmptyMsg msg="No extra services recorded." />;
 }
