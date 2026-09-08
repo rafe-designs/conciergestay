@@ -39,6 +39,7 @@ export async function POST(request: Request) {
       grandTotal,
       apartmentCut,
       platformFee,
+      platformFeeTotal,
       diningTotal,
       servicesCut,
       dailyMealSelections,
@@ -53,6 +54,7 @@ export async function POST(request: Request) {
     const parsedBaseRent = Number(baseRentTotal ?? stayCost ?? 0);
     const parsedServices = Number(servicesTotal ?? diningTotal ?? totalConciergePrice ?? 0);
     const parsedGrandTotal = Number(grandTotal ?? 0);
+    const parsedPlatformFee = Number(platformFeeTotal ?? platformFee ?? 0);
 
     const resolvedCustomerName = customerName || guestInfo?.fullName || '';
     const resolvedCustomerEmail = customerEmail || guestInfo?.email || '';
@@ -60,7 +62,6 @@ export async function POST(request: Request) {
     const resolvedGuestCount = Number(guestCount || guestInfo?.guests || 1);
 
     const bookingData: Record<string, any> = {
-      // Ensure an ID is ALWAYS set
       id: id || crypto.randomUUID(),
       reference: resolvedTxRef,
       paymentReference: resolvedTxRef,
@@ -72,7 +73,8 @@ export async function POST(request: Request) {
       grandTotal: parsedGrandTotal,
       apartmentCut: Number(apartmentCut ?? parsedBaseRent),
       servicesCut: Number(servicesCut ?? parsedServices),
-      platformFee: Number(platformFee ?? 0),
+      platformFee: parsedPlatformFee,
+      platformFeeTotal: parsedPlatformFee, // Added to fulfill non-null constraint
       status: status || 'Confirmed',
       paymentStatus: paymentStatus || 'Paid',
       customerName: resolvedCustomerName,
