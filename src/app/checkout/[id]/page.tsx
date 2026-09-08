@@ -371,7 +371,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
           { display_name: 'Stay Duration', variable_name: 'stay_duration', value: `${nights} Nights (${checkInDate} to ${checkOutDate})` },
         ],
       },
-      callback: function (response: { reference: string }) {
+      callback: async function (response: { reference: string }) {
         const payload = {
           transactionRef: response.reference,
           listingId: resolvedParams.id,
@@ -416,16 +416,30 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
         localStorage.setItem('booking_confirmation_payload', JSON.stringify(payload));
 
-        fetch('/api/bookings/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            transactionRef: response.reference,
-            bookingData: payload,
-          }),
-        }).catch((err) => console.error('Booking sync failed:', err));
+        try {
+          // Await the fetch request so Netlify completes the call before routing
+          const res = await fetch('/api/bookings/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              transactionRef: response.reference,
+              bookingData: payload,
+            }),
+          });
 
-        router.push(`/booking-success?reference=${response.reference}&listing=${resolvedParams.id}`);
+          const data = await res.json();
+
+          if (!res.ok) {
+            console.error('Server error saving booking:', data);
+            alert(`Payment successful, but saving booking failed: ${data.message || data.error}`);
+            return;
+          }
+
+          router.push(`/booking-success?reference=${response.reference}&listing=${resolvedParams.id}`);
+        } catch (err) {
+          console.error('Network error during booking sync:', err);
+          alert('Payment successful, but a network error occurred while recording your booking.');
+        }
       },
       onClose: function () {
         alert('Transaction was closed.');
