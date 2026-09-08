@@ -19,6 +19,7 @@ export async function POST(request: Request) {
     const txRefFromRoot = body?.transactionRef;
 
     const {
+      id,
       reference,
       transactionRef,
       listingId,
@@ -29,14 +30,23 @@ export async function POST(request: Request) {
       checkIn,
       checkOut,
       totalNights,
+      guestCount,
       guestInfo,
       baseRentTotal,
       stayCost,
       servicesTotal,
       totalConciergePrice,
-      diningTotal,
       grandTotal,
+      apartmentCut,
+      platformFee,
+      diningTotal,
+      servicesCut,
+      dailyMealSelections,
+      parsedMeals,
+      addons,
+      activeAddons,
       status,
+      paymentStatus,
     } = raw || {};
 
     const resolvedTxRef = txRefFromRoot || transactionRef || reference || `CS_REF_${Date.now()}`;
@@ -47,20 +57,32 @@ export async function POST(request: Request) {
     const resolvedCustomerName = customerName || guestInfo?.fullName || '';
     const resolvedCustomerEmail = customerEmail || guestInfo?.email || '';
     const resolvedPhone = phone || guestInfo?.phone || '';
+    const resolvedGuestCount = Number(guestCount || guestInfo?.guests || 1);
 
-    // Core safe columns guaranteed to exist or match default setups
     const bookingData: Record<string, any> = {
+      // Ensure an ID is ALWAYS set
+      id: id || crypto.randomUUID(),
       reference: resolvedTxRef,
+      paymentReference: resolvedTxRef,
       checkIn: checkIn ? new Date(checkIn).toISOString() : new Date().toISOString(),
       checkOut: checkOut ? new Date(checkOut).toISOString() : new Date().toISOString(),
       totalNights: Number(totalNights) || 1,
       baseRentTotal: parsedBaseRent,
       servicesTotal: parsedServices,
       grandTotal: parsedGrandTotal,
+      apartmentCut: Number(apartmentCut ?? parsedBaseRent),
+      servicesCut: Number(servicesCut ?? parsedServices),
+      platformFee: Number(platformFee ?? 0),
       status: status || 'Confirmed',
+      paymentStatus: paymentStatus || 'Paid',
       customerName: resolvedCustomerName,
       customerEmail: resolvedCustomerEmail,
       phone: resolvedPhone,
+      guestCount: resolvedGuestCount,
+      apartmentTitle: apartmentTitle || '',
+      listingId: listingId || '',
+      dailyMealSelections: dailyMealSelections || parsedMeals || [],
+      addons: addons || activeAddons || {},
     };
 
     let { data: newBooking, error } = await supabase
