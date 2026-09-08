@@ -12,11 +12,11 @@ export async function POST(request: Request) {
       body = await request.json();
     } catch (parseError) {
       console.error('[API Parse Error]: Request body is empty or invalid JSON');
-      return NextResponse.json(
-        { error: 'Invalid JSON payload received' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid JSON payload received' }, { status: 400 });
     }
+
+    const raw = body?.bookingData || body;
+    const txRefFromRoot = body?.transactionRef;
 
     const {
       id,
@@ -27,6 +27,7 @@ export async function POST(request: Request) {
       userId,
       customerEmail,
       customerName,
+      phone,
       checkIn,
       checkOut,
       totalNights,
@@ -42,67 +43,64 @@ export async function POST(request: Request) {
       conciergeCut,
       kitchenCut,
       totalMealPrice,
+      diningTotal,
+      servicesCut,
       dailyMealSelections,
       parsedMeals,
       addons,
       activeAddons,
       status,
       paymentStatus,
-    } = body || {};
+    } = raw || {};
 
+    const resolvedTxRef = txRefFromRoot || transactionRef || reference;
     const parsedBaseRent = Number(baseRentTotal ?? stayCost ?? 0);
-    const parsedServices = Number(servicesTotal ?? totalConciergePrice ?? 0);
+    const parsedServices = Number(servicesTotal ?? diningTotal ?? totalConciergePrice ?? 0);
     const parsedGrandTotal = Number(grandTotal ?? 0);
-    const parsedKitchenCut = Number(kitchenCut ?? totalMealPrice ?? 0);
-    const bookingRef = reference || transactionRef || id || `CS_REF_${Date.now()}`;
+    const bookingRef = resolvedTxRef || id || `CS_REF_${Date.now()}`;
 
+    const resolvedCustomerName = customerName || guestInfo?.fullName;
+    const resolvedCustomerEmail = customerEmail || guestInfo?.email;
+    const resolvedPhone = phone || guestInfo?.phone;
+    const resolvedGuestCount = Number(guestCount || guestInfo?.guests || 1);
+
+    // Map properties directly to your Supabase camelCase columns
     const bookingData: Record<string, any> = {
       reference: bookingRef,
-      check_in: checkIn ? new Date(checkIn).toISOString() : new Date().toISOString(),
-      check_out: checkOut ? new Date(checkOut).toISOString() : new Date().toISOString(),
-      total_nights: Number(totalNights) || 1,
-      base_rent_total: parsedBaseRent,
-      services_total: parsedServices,
-      grand_total: parsedGrandTotal,
-      apartment_cut: Number(apartmentCut ?? parsedBaseRent),
-      platform_fee: Number(platformFee ?? 0),
-      concierge_cut: Number(conciergeCut ?? parsedServices),
-      kitchen_cut: parsedKitchenCut,
+      paymentReference: bookingRef,
+      checkIn: checkIn ? new Date(checkIn).toISOString() : new Date().toISOString(),
+      checkOut: checkOut ? new Date(checkOut).toISOString() : new Date().toISOString(),
+      totalNights: Number(totalNights) || 1,
+      baseRentTotal: parsedBaseRent,
+      servicesTotal: parsedServices,
+      grandTotal: parsedGrandTotal,
+      apartmentCut: Number(apartmentCut ?? parsedBaseRent),
+      servicesCut: Number(servicesCut ?? parsedServices),
+      platformFee: Number(platformFee ?? 0),
       status: status || 'Confirmed',
-      payment_status: paymentStatus || 'Paid',
+      paymentStatus: paymentStatus || 'Paid',
+      customerName: resolvedCustomerName || '',
+      customerEmail: resolvedCustomerEmail || '',
+      phone: resolvedPhone || '',
+      guestCount: resolvedGuestCount,
+      apartmentTitle: apartmentTitle || '',
+      listingId: listingId || '',
+      dailyMealSelections: dailyMealSelections || parsedMeals || [],
+      addons: addons || activeAddons || {},
     };
 
     if (id) bookingData.id = id;
-    if (customerName) bookingData.customer_name = customerName;
-    if (customerEmail) bookingData.customer_email = customerEmail;
-    if (guestCount) bookingData.guest_count = Number(guestCount);
-    if (apartmentTitle) bookingData.apartment_title = apartmentTitle;
-    if (guestInfo) bookingData.guest_info = typeof guestInfo === 'string' ? guestInfo : JSON.stringify(guestInfo);
-    if (listingId) bookingData.listing_id = listingId;
-    if (userId) bookingData.user_id = userId;
 
-    bookingData.daily_meal_selections = dailyMealSelections || parsedMeals || [];
-    bookingData.addons = addons || activeAddons || {};
-
+    // Note: Change 'Booking' to 'bookings' if your table name is lowercase in Supabase
     let { data: newBooking, error } = await supabase
-      .from('bookings')
+      .from('Booking') 
       .insert([bookingData])
       .select()
       .single();
 
     if (error) {
-      console.warn('[Supabase Insert Notice]: Retrying without relational IDs...', error.message);
-      delete bookingData.listing_id;
-      delete bookingData.user_id;
-
-      const retryResult = await supabase
-        .from('bookings')
-        .insert([bookingData])
-        .select()
-        .single();
-
-      if (retryResult.error) throw retryResult.error;
-      newBooking = retryResult.data;
+      console.error('[Supabase Insert Error]:', error.message);
+      return NextResponse.json({ error: 'Database insert failed', message: error.message }, { status: 500 });
     }
 
     return NextResponse.json({ success: true, booking: newBooking }, { status: 201 });
