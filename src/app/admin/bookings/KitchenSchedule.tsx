@@ -205,6 +205,12 @@ const extractDiningPreference = (booking: BookingItem): string | null => {
   return formatItemName(str);
 };
 
+const isTruthyService = (val: any): boolean => {
+  if (val === null || val === undefined || val === false) return false;
+  const str = String(val).trim().toLowerCase();
+  return !['false', 'none', 'no', '0', 'no_pickup', 'none_selected', 'null', 'undefined', ''].includes(str);
+};
+
 export default function KitchenSchedule({ bookings, showAddons = true }: KitchenScheduleProps) {
   if (!bookings || bookings.length === 0) {
     return <div className="text-gray-400 p-4">No active schedule logs available.</div>;
@@ -311,43 +317,77 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
           ([, dishes]) => dishes.length > 0
         );
 
+        // Parent service existence checks
+        const isSecurityActive = isTruthyService(
+          addonData?.security || addonData?.securityType || addonData?.securityService
+        );
+        const isAirportActive = isTruthyService(
+          addonData?.airport || addonData?.airportTransfer || addonData?.airportService
+        );
+        const isHousekeepingActive = isTruthyService(
+          addonData?.housekeeping || addonData?.housekeepingService
+        );
+        const isChauffeurActive = isTruthyService(
+          addonData?.chauffeur || addonData?.chauffeurService
+        );
+
         const validAddons =
           addonData && typeof addonData === 'object'
             ? Object.entries(addonData).filter(([key, val]: [string, any]) => {
                 const lowerKey = key.toLowerCase();
 
-                if (
-                  [
-                    'guestcount',
-                    'totalguests',
-                    'numberofguests',
-                    'guestname',
-                    'dailymealselections',
-                    'mealselections',
-                    'dailymeals',
-                    'prepmodes',
-                    'prep_modes',
-                  ].includes(lowerKey)
-                ) {
-                  return false;
-                }
+                // 1. Omit metadata & booking/meal configuration keys
+                const ignoredKeys = [
+                  'guestcount',
+                  'totalguests',
+                  'numberofguests',
+                  'guestname',
+                  'dailymealselections',
+                  'mealselections',
+                  'dailymeals',
+                  'prepmodes',
+                  'prep_modes',
+                  'addons',
+                ];
+                if (ignoredKeys.includes(lowerKey)) return false;
 
-                if (
-                  val === null ||
-                  val === undefined ||
-                  val === false ||
-                  val === 'false' ||
-                  val === 'none' ||
-                  val === 'NONE' ||
-                  val === 'no' ||
-                  val === 'NO' ||
-                  val === '0' ||
-                  val === 0 ||
-                  val === 'no_pickup' ||
-                  val === 'none_selected'
-                ) {
-                  return false;
-                }
+                // 2. Omit security sub-properties if security wasn't explicitly selected
+                const securitySubFields = [
+                  'securitycount',
+                  'security_count',
+                  'guards',
+                  'securitytype',
+                  'securityservice',
+                ];
+                if (securitySubFields.includes(lowerKey) && !isSecurityActive) return false;
+
+                // 3. Omit airport sub-properties if airport transfer wasn't explicitly selected
+                const airportSubFields = [
+                  'airportdirection',
+                  'airport_direction',
+                  'airporttripdirection',
+                  'tripdirection',
+                  'direction',
+                  'airporttransfer',
+                  'airportservice',
+                ];
+                if (airportSubFields.includes(lowerKey) && !isAirportActive) return false;
+
+                // 4. Omit housekeeping sub-properties if housekeeping wasn't explicitly selected
+                const housekeepingSubFields = [
+                  'housekeepingschedule',
+                  'housekeeping_schedule',
+                  'frequency',
+                  'housekeepingservice',
+                ];
+                if (housekeepingSubFields.includes(lowerKey) && !isHousekeepingActive) return false;
+
+                // 5. Omit chauffeur sub-properties if chauffeur service wasn't explicitly selected
+                const chauffeurSubFields = ['chauffeurservice', 'chauffeurcar', 'vehicle'];
+                if (chauffeurSubFields.includes(lowerKey) && !isChauffeurActive) return false;
+
+                // 6. Check value truthiness
+                if (!isTruthyService(val)) return false;
 
                 return true;
               })
