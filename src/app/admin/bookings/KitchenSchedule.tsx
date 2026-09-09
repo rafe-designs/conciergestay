@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo } from 'react';
 
 interface BookingItem {
   id: string;
@@ -75,6 +75,37 @@ const formatItemName = (id: string): string => {
     .toUpperCase();
 };
 
+// Dynamic Meal Unit Price Lookup Helper
+const getMealUnitPrice = (mealName: string): number => {
+  const name = mealName.toLowerCase();
+  if (name.includes('jollof')) return 50000;
+  if (name.includes('fried rice')) return 50000;
+  if (name.includes('coconut rice')) return 50000;
+  if (name.includes('native rice')) return 45000;
+  if (name.includes('ofada')) return 55000;
+  if (name.includes('efo') || name.includes('egusi') || name.includes('ogbono') || name.includes('soup')) return 45000;
+  if (name.includes('pasta') || name.includes('spaghetti')) return 40000;
+  return 45000; // default base price per liter
+};
+
+const getProteinUnitPrice = (proteinName: string): number => {
+  const p = proteinName.toLowerCase();
+  if (p.includes('beef')) return 6000;
+  if (p.includes('goat')) return 8000;
+  if (p.includes('chicken')) return 10000;
+  if (p.includes('turkey')) return 12000;
+  if (p.includes('assorted')) return 9000;
+  if (p.includes('fresh fish')) return 14000;
+  if (p.includes('catfish')) return 16000;
+  if (p.includes('croaker')) return 16000;
+  if (p.includes('stockfish')) return 12000;
+  if (p.includes('snail')) return 16000;
+  if (p.includes('cow leg')) return 8000;
+  if (p.includes('cow tail')) return 10000;
+  if (p.includes('shaki') || p.includes('tripe')) return 7000;
+  return 5000;
+};
+
 const parseProteinsWithQty = (rawProteins: any): ProteinItem[] => {
   if (!rawProteins) return [];
   const proteinMap: Record<string, { qty: number; price: number }> = {};
@@ -83,14 +114,16 @@ const parseProteinsWithQty = (rawProteins: any): ProteinItem[] => {
     rawProteins.forEach((p) => {
       if (typeof p === 'string') {
         const key = formatItemName(p);
+        const unitPrice = getProteinUnitPrice(key);
         proteinMap[key] = {
           qty: (proteinMap[key]?.qty || 0) + 1,
-          price: proteinMap[key]?.price || 0,
+          price: (proteinMap[key]?.price || 0) + unitPrice,
         };
       } else if (typeof p === 'object' && p !== null) {
         const name = formatItemName(p.name || p.id || p.title || 'Protein');
         const qty = Number(p.qty || p.quantity || p.count || 1);
-        const price = Number(p.price || p.amount || p.cost || 0);
+        const unitPrice = Number(p.price || p.amount || p.cost || 0) || getProteinUnitPrice(name);
+        const price = qty * unitPrice;
         proteinMap[name] = {
           qty: (proteinMap[name]?.qty || 0) + qty,
           price: (proteinMap[name]?.price || 0) + price,
@@ -100,8 +133,9 @@ const parseProteinsWithQty = (rawProteins: any): ProteinItem[] => {
   } else if (typeof rawProteins === 'object') {
     Object.entries(rawProteins).forEach(([key, val]) => {
       const name = formatItemName(key);
+      const unitPrice = getProteinUnitPrice(name);
       const qty = typeof val === 'number' ? 1 : Number((val as any)?.qty || (val as any)?.quantity || (val as any)?.count || 1);
-      const price = typeof val === 'number' ? val : Number((val as any)?.price || (val as any)?.amount || (val as any)?.cost || 0);
+      const price = (typeof val === 'number' ? val : Number((val as any)?.price || (val as any)?.amount || (val as any)?.cost || 0)) || (qty * unitPrice);
       proteinMap[name] = {
         qty: (proteinMap[name]?.qty || 0) + qty,
         price: (proteinMap[name]?.price || 0) + price,
@@ -118,7 +152,6 @@ const parseProteinsWithQty = (rawProteins: any): ProteinItem[] => {
 
 const deepFindKey = (obj: any, targetKeys: string[]): any => {
   if (!obj || typeof obj !== 'object') return null;
-
   const stack = [obj];
   while (stack.length > 0) {
     const current = stack.pop();
@@ -156,25 +189,10 @@ const extractDiningPreference = (booking: BookingItem): string | null => {
   }
 
   const searchTargets = [
-    'prepmodes',
-    'prepmode',
-    'prep_modes',
-    'prep_mode',
-    'diningpreference',
-    'dining_preference',
-    'diningoption',
-    'dining_option',
-    'chefoption',
-    'chef_option',
-    'deliveryoption',
-    'delivery_option',
-    'dining',
-    'chefservice',
-    'fulfillment',
-    'servicetype',
-    'deliverytype',
-    'cheftype',
-    'mode',
+    'prepmodes', 'prepmode', 'prep_modes', 'prep_mode', 'diningpreference',
+    'dining_preference', 'diningoption', 'dining_option', 'chefoption', 'chef_option',
+    'deliveryoption', 'delivery_option', 'dining', 'chefservice', 'fulfillment',
+    'servicetype', 'deliverytype', 'cheftype', 'mode',
   ];
 
   let rawPref =
@@ -208,7 +226,6 @@ const extractDiningPreference = (booking: BookingItem): string | null => {
   }
 
   const str = String(rawPref).toLowerCase().trim();
-
   if (!str || str === 'none' || str === 'false') return null;
 
   if (str.includes('chef') || str.includes('inhouse') || str.includes('in_house') || str.includes('cook')) {
@@ -255,13 +272,26 @@ const extractKitchenTotalCost = (booking: BookingItem, dishesList: ProcessedDish
 };
 
 export default function KitchenSchedule({ bookings, showAddons = true }: KitchenScheduleProps) {
-  if (!bookings || bookings.length === 0) {
-    return <div className="text-gray-400 p-4">No active schedule logs available.</div>;
+  const activeKitchenBookings = useMemo(() => {
+    return (bookings || []).filter((booking) => {
+      const rawAddons = safeParseJson(booking.addons);
+      const addonData = rawAddons?.addons || rawAddons;
+      const mealData = safeParseJson(booking.dailyMealSelections || addonData?.dailyMealSelections);
+      
+      const hasMeals = mealData && typeof mealData === 'object' && Object.keys(mealData).length > 0;
+      const kitchenCost = Number(booking.kitchenTotal || booking.mealTotal || booking.foodTotal || 0);
+      
+      return hasMeals || kitchenCost > 0;
+    });
+  }, [bookings]);
+
+  if (!activeKitchenBookings || activeKitchenBookings.length === 0) {
+    return <div className="text-gray-400 p-4 text-xs italic">No active kitchen schedule logs available.</div>;
   }
 
   return (
     <div className="space-y-8">
-      {bookings.map((booking, bIdx) => {
+      {activeKitchenBookings.map((booking, bIdx) => {
         const rawAddons = safeParseJson(booking.addons);
         const addonData = rawAddons?.addons || rawAddons;
         const mealData = safeParseJson(booking.dailyMealSelections || addonData?.dailyMealSelections);
@@ -298,10 +328,15 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
           if (typeof parsed === 'string') {
             const targetDate = dateContext || 'General Schedule';
             if (!groupedMeals[targetDate]) groupedMeals[targetDate] = [];
+            const dishName = formatItemName(parsed);
+            const liters = 1;
+            const unitPrice = getMealUnitPrice(dishName);
             const dishObj: ProcessedDish = {
               slot: formatItemName(currentCategory || 'Main Meal'),
               category: 'Food',
-              name: formatItemName(parsed),
+              name: dishName,
+              liters,
+              price: unitPrice * liters,
             };
             groupedMeals[targetDate].push(dishObj);
             allParsedDishes.push(dishObj);
@@ -358,15 +393,20 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                   }
                 }
 
+                const dishName = formatItemName(innerParsed.name || innerParsed.title || key);
+                const liters = innerParsed.liters ? Number(innerParsed.liters) : 1;
+                const basePrice = Number(innerParsed.price || innerParsed.amount || innerParsed.cost || 0) || getMealUnitPrice(dishName);
+                const computedDishPrice = basePrice * liters;
+
                 const dishObj: ProcessedDish = {
                   slot: formatItemName(nextCategory || key || 'Dish'),
                   category: 'Food',
-                  name: formatItemName(innerParsed.name || innerParsed.title || key),
-                  liters: innerParsed.liters ? Number(innerParsed.liters) : undefined,
+                  name: dishName,
+                  liters,
                   proteins: proteinList,
                   swallow: swallowName,
                   swallowPrice: swallowCost,
-                  price: innerParsed.price || innerParsed.amount || innerParsed.cost ? Number(innerParsed.price || innerParsed.amount || innerParsed.cost) : undefined,
+                  price: computedDishPrice,
                 };
 
                 groupedMeals[targetDate].push(dishObj);
@@ -384,71 +424,21 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
 
         const totalKitchenCost = extractKitchenTotalCost(booking, allParsedDishes);
 
-        const isSecurityActive = isTruthyService(
-          addonData?.security || addonData?.securityType || addonData?.securityService
-        );
-        const isAirportActive = isTruthyService(
-          addonData?.airport || addonData?.airportTransfer || addonData?.airportService
-        );
-        const isHousekeepingActive = isTruthyService(
-          addonData?.housekeeping || addonData?.housekeepingService
-        );
-        const isChauffeurActive = isTruthyService(
-          addonData?.chauffeur || addonData?.chauffeurService
-        );
+        const isSecurityActive = isTruthyService(addonData?.security || addonData?.securityType);
+        const isAirportActive = isTruthyService(addonData?.airport || addonData?.airportTransfer);
+        const isHousekeepingActive = isTruthyService(addonData?.housekeeping);
+        const isChauffeurActive = isTruthyService(addonData?.chauffeur);
 
         const validAddons =
           addonData && typeof addonData === 'object'
             ? Object.entries(addonData).filter(([key, val]: [string, any]) => {
                 const lowerKey = key.toLowerCase();
-
                 const ignoredKeys = [
-                  'guestcount',
-                  'totalguests',
-                  'numberofguests',
-                  'guestname',
-                  'dailymealselections',
-                  'mealselections',
-                  'dailymeals',
-                  'prepmodes',
-                  'prep_modes',
-                  'addons',
+                  'guestcount', 'totalguests', 'numberofguests', 'guestname',
+                  'dailymealselections', 'mealselections', 'dailymeals', 'prepmodes', 'addons',
                 ];
                 if (ignoredKeys.includes(lowerKey)) return false;
-
-                const securitySubFields = [
-                  'securitycount',
-                  'security_count',
-                  'guards',
-                  'securitytype',
-                  'securityservice',
-                ];
-                if (securitySubFields.includes(lowerKey) && !isSecurityActive) return false;
-
-                const airportSubFields = [
-                  'airportdirection',
-                  'airport_direction',
-                  'airporttripdirection',
-                  'tripdirection',
-                  'direction',
-                  'airporttransfer',
-                  'airportservice',
-                ];
-                if (airportSubFields.includes(lowerKey) && !isAirportActive) return false;
-
-                const housekeepingSubFields = [
-                  'housekeepingschedule',
-                  'housekeeping_schedule',
-                  'frequency',
-                  'housekeepingservice',
-                ];
-                if (housekeepingSubFields.includes(lowerKey) && !isHousekeepingActive) return false;
-
-                const chauffeurSubFields = ['chauffeurservice', 'chauffeurcar', 'vehicle'];
-                if (chauffeurSubFields.includes(lowerKey) && !isChauffeurActive) return false;
-
                 if (!isTruthyService(val)) return false;
-
                 return true;
               })
             : [];
@@ -456,11 +446,7 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
         const cardKey = booking.id || `kschedule-${bIdx}`;
 
         return (
-          <div
-            key={cardKey}
-            className="p-6 rounded-xl bg-gray-950 border border-gray-800 space-y-6 shadow-md"
-          >
-            {/* Header Info */}
+          <div key={cardKey} className="p-6 rounded-xl bg-gray-950 border border-gray-800 space-y-6 shadow-md">
             <div className="flex justify-between items-start border-b border-gray-800 pb-4">
               <div>
                 <div className="flex items-center gap-3 flex-wrap">
@@ -468,15 +454,8 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                   <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-purple-950 text-purple-300 border border-purple-800">
                     👤 {totalGuests} {Number(totalGuests) === 1 ? 'Guest' : 'Guests'}
                   </span>
-
                   {diningPref ? (
-                    <span
-                      className={`px-2.5 py-0.5 text-xs font-bold rounded-full border ${
-                        diningPref === 'In-House Chef'
-                          ? 'bg-amber-950/80 text-amber-300 border-amber-700'
-                          : 'bg-cyan-950/80 text-cyan-300 border-cyan-700'
-                      }`}
-                    >
+                    <span className={`px-2.5 py-0.5 text-xs font-bold rounded-full border ${diningPref === 'In-House Chef' ? 'bg-amber-950/80 text-amber-300 border-amber-700' : 'bg-cyan-950/80 text-cyan-300 border-cyan-700'}`}>
                       {diningPref === 'In-House Chef' ? '👨‍🍳 In-House Chef' : '🚚 Delivery'}
                     </span>
                   ) : (
@@ -487,17 +466,11 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                 </div>
                 <p className="text-sm text-cyan-400 font-medium mt-0.5">{booking.listingId}</p>
                 <p className="text-xs text-amber-400 font-mono mt-1">📞 {guestPhone}</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  Check-in: {booking.checkIn ? new Date(booking.checkIn).toLocaleDateString() : 'N/A'} | Check-out:{' '}
-                  {booking.checkOut ? new Date(booking.checkOut).toLocaleDateString() : 'N/A'}
-                </p>
               </div>
-
               <div className="flex flex-col items-end gap-2">
                 <span className="px-3 py-1 text-xs font-semibold rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
                   {booking.status}
                 </span>
-
                 {totalKitchenCost > 0 && (
                   <span className="px-3 py-1 text-xs font-bold rounded-full bg-amber-950/90 text-amber-300 border border-amber-700 font-mono">
                     💰 Food Order Total: ₦{totalKitchenCost.toLocaleString()}
@@ -506,29 +479,22 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
               </div>
             </div>
 
-            {/* Daily Meal Selections Section */}
             <div>
               <h4 className="text-xs font-bold text-cyan-400 tracking-wider uppercase mb-3">
                 Daily Meal Selections, Swallows & Protein Add-ons
               </h4>
-
               {normalizedMealEntries.length === 0 ? (
                 <div className="p-4 rounded-lg bg-gray-900/50 border border-gray-800">
-                  <p className="text-xs text-amber-400 font-medium">
-                    No meal selections saved for this booking.
-                  </p>
+                  <p className="text-xs text-amber-400 font-medium">No meal selections saved for this booking.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
                   {normalizedMealEntries.map(([dayLabel, dishes], dayIdx) => (
                     <div key={`day-${dayIdx}`} className="p-4 rounded-lg bg-gray-900/70 border border-gray-800 space-y-2">
-                      <span className="text-xs font-bold text-amber-400 block mb-2">
-                        📅 {dayLabel}:
-                      </span>
+                      <span className="text-xs font-bold text-amber-400 block mb-2">📅 {dayLabel}:</span>
                       <div className="space-y-2">
                         {dishes.map((dish, dIdx) => {
                           const dishLineTotal = (dish.price || 0) + (dish.swallowPrice || 0) + (dish.proteins?.reduce((sum, p) => sum + (p.price || 0), 0) || 0);
-
                           return (
                             <div key={`dish-${dIdx}`} className="text-xs space-y-1 bg-black/40 p-3 rounded-lg border border-white/5">
                               <div className="flex items-center justify-between text-gray-200 font-semibold">
@@ -541,7 +507,7 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                                 <div className="flex items-center gap-2">
                                   {dish.liters && (
                                     <span className="text-xs font-mono text-amber-300 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800">
-                                      {dish.liters} Liters
+                                      {dish.liters} {dish.liters === 1 ? 'Liter' : 'Liters'}
                                     </span>
                                   )}
                                   {dish.price && dish.price > 0 && (
@@ -590,40 +556,6 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                 </div>
               )}
             </div>
-
-            {/* Selected Add-ons & Services */}
-            {showAddons && (
-              <div>
-                <h4 className="text-xs font-bold text-cyan-400 tracking-wider uppercase mb-3">
-                  Selected Add-ons & Services
-                </h4>
-
-                {validAddons.length === 0 ? (
-                  <p className="text-xs text-gray-500 italic">No additional services selected.</p>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {validAddons.map(([key, val]: [string, any], i) => {
-                      const displayVal =
-                        typeof val === 'object' && val !== null
-                          ? val.price
-                            ? `₦${Number(val.price).toLocaleString()}`
-                            : 'Selected'
-                          : String(val);
-
-                      return (
-                        <div
-                          key={`addon-${key}-${i}`}
-                          className="p-3 rounded-lg bg-gray-900/50 border border-gray-800 text-xs text-gray-200 flex justify-between items-center"
-                        >
-                          <span className="capitalize">{key.replace(/([A-Z])/g, ' $1')}</span>
-                          <span className="text-cyan-400 font-mono capitalize">{displayVal}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         );
       })}

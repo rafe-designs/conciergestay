@@ -56,13 +56,13 @@ const SERVICES: ServiceDetail[] = [
   {
     id: 'vip-security',
     title: 'Close Protection & Security',
-    tagline: 'Discreet Security & Armed Escorts',
+    tagline: 'Discreet Security Escorts',
     icon: <ShieldCheck className="w-6 h-6 text-yellow-400" />,
     heroImage: 'https://images.unsplash.com/photo-1618371731836-2b9bff9ac72a?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8M3x8cHJpdmF0ZSUyMGJvZHlndWFyZHxlbnwwfHwwfHx8MA%3D%3D?auto=format&fit=crop&q=80&w=1200',
-    description: 'Your safety is paramount. We provide professional close protection operatives and armed escort vehicles for airport transfers, high-profile movements, and personal security during your stay.',
+    description: 'Your safety is paramount. We provide professional close protection operatives and escort vehicles for airport transfers, high-profile movements, and personal security during your stay.',
     features: [
       'Trained Close Protection Officers (CPOs)',
-      'Armed Mobile Escort Vehicles',
+      'Mobile Escort Vehicles',
       'Discreet Executive Protection',
       '24/7 Security Monitoring & Emergency Response'
     ]
@@ -94,20 +94,7 @@ const SERVICES: ServiceDetail[] = [
       '24/7 Dedicated Desk Agent'
     ]
   },
-  {
-    id: 'wellness-spa',
-    title: 'In-Suite Spa & Wellness',
-    tagline: 'Private Massage & Holistic Treatments',
-    icon: <Sparkles className="w-6 h-6 text-yellow-400" />,
-    heroImage: 'https://images.unsplash.com/photo-1544161515-4ab6ce6db874?auto=format&fit=crop&q=80&w=1200',
-    description: 'Transform your apartment into a sanctuary. Unwind with licensed massage therapists, skincare specialists, and private yoga instructors delivered directly to your room.',
-    features: [
-      'Deep Tissue & Therapeutic Massages',
-      'Private Yoga & Personal Trainer Sessions',
-      'Organic Skin & Body Treatments',
-      'All Professional Equipment Provided On-Site'
-    ]
-  }
+  
 ];
 
 export default function ServicesSection() {

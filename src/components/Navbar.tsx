@@ -76,7 +76,7 @@ export default function Navbar({ onServicesClick, onRoomsClick, onContactClick }
           onClick={handleHomeClick}
           className="text-xl sm:text-2xl font-serif font-bold tracking-wide text-white flex items-center"
         >
-          ConciergeStay<span className="text-cyan-400">.</span>
+          <span className="text-yellow-400">Sunshine</span> Concierge<span className="text-yellow-400">.</span>
         </a>
 
         <nav className="hidden md:flex items-center space-x-8 text-xs font-mono tracking-widest text-slate-300">

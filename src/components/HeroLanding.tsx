@@ -22,7 +22,7 @@ export default function HeroLanding({ onBookClick }: HeroLandingProps) {
   const yBg = useTransform(scrollYProgress, [0, 1], ['0%', '20%']);
 
   return (
-    <div ref={containerRef} className="relative h-[120vh] w-full bg-slate-950">
+    <div ref={containerRef} className="relative h-[200vh] w-full bg-slate-950">
       <div className="sticky top-0 h-screen w-full overflow-hidden">
         <motion.div
           style={{ scale, opacity, borderRadius }}
@@ -58,7 +58,7 @@ export default function HeroLanding({ onBookClick }: HeroLandingProps) {
 
               <h1 className="text-4xl font-serif leading-[1.08] tracking-tight text-white sm:text-5xl lg:text-6xl xl:text-7xl">
                 Where Every Stay <br />
-                <span className="font-light italic text-slate-200">Feels Effortlessly Elevated</span>
+                <span className="font-light italic text-slate-200">Feels <span className="text-yellow-400">Effortlessly</span> Elevated</span>
               </h1>
 
               <p className="max-w-md font-sans text-xs font-light leading-relaxed text-slate-300 sm:text-sm">
@@ -68,17 +68,17 @@ export default function HeroLanding({ onBookClick }: HeroLandingProps) {
               <div className="pt-1">
                 <button
                   onClick={onBookClick}
-                  className="group flex items-center gap-3 rounded-full bg-white/95 px-5 py-2.5 text-xs font-mono font-bold text-slate-950 backdrop-blur-md transition-all hover:bg-cyan-400 hover:shadow-lg hover:shadow-cyan-500/20 sm:px-6 sm:py-3"
+                  className="group flex items-center gap-3 rounded-full bg-yellow-400 px-5 py-2.5 text-xs font-mono font-bold text-slate-950 backdrop-blur-md transition-all hover:bg-yellow-400 hover:shadow-lg hover:shadow-yellow-500/20 sm:px-6 sm:py-3"
                 >
                   <span>Book a stay</span>
-                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-950 text-white transition group-hover:bg-slate-950 sm:h-6 sm:w-6">
+                  <div className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-950 text-yellow-400 transition group-hover:bg-slate-950 sm:h-6 sm:w-6">
                     <ArrowUpRight className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                   </div>
                 </button>
               </div>
-            </motion.div>
+            </motion.div> <br />
 
-            <div className="shrink-0 flex flex-col gap-4 border-t border-white/10 pt-4 md:flex-row md:items-center md:justify-between">
+            <div className="shrink-0 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -117,13 +117,13 @@ export default function HeroLanding({ onBookClick }: HeroLandingProps) {
                   </p>
                   <span className="block font-mono text-[9px] font-bold uppercase text-slate-400 sm:text-[10px]">
                     — Sophia L., Guest
-                  </span>
+                  </span> 
                 </div>
               </motion.div>
             </div>
           </div>
         </motion.div>
       </div>
-    </div>
+    </div> 
   );
 }

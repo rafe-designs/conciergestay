@@ -271,8 +271,8 @@ export default function HomePage() {
             </div>
 
             {submitStatus === 'success' && (
-              <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs font-mono flex items-center gap-3">
-                <CheckCircle className="h-5 w-5 shrink-0 text-emerald-400" />
+              <div className="p-4 rounded-2xl bg-yellow-950/40 border border-yellow-500/40 text-yellow-300 text-xs font-mono flex items-center gap-3">
+                <CheckCircle className="h-5 w-5 shrink-0 text-yellow-400" />
                 <span>Your inquiry has been sent to our concierge desk. We will reach out shortly!</span>
               </div>
             )}
@@ -294,7 +294,7 @@ export default function HomePage() {
                     placeholder="John Doe"
                     value={contactForm.name}
                     onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-cyan-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-yellow-500"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -305,7 +305,7 @@ export default function HomePage() {
                     placeholder="john@example.com"
                     value={contactForm.email}
                     onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-cyan-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-yellow-500"
                   />
                 </div>
               </div>
@@ -317,7 +317,7 @@ export default function HomePage() {
                   placeholder="+234 800 000 0000"
                   value={contactForm.phone}
                   onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-cyan-500"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-yellow-500"
                 />
               </div>
 
@@ -329,7 +329,7 @@ export default function HomePage() {
                   placeholder="Detail your requirements, dates, or specific concierge preferences..."
                   value={contactForm.message}
                   onChange={(e) => setContactForm({ ...contactForm, message: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-cyan-500 resize-none"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-yellow-500 resize-none"
                 />
               </div>
 

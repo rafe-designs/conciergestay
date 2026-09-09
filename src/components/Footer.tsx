@@ -4,8 +4,8 @@ import React from 'react';
 import { Phone } from 'lucide-react';
 
 export default function Footer() {
-  const whatsappNumber = "2348000000000"; // Replace with your target WhatsApp number
-  const whatsappMessage = encodeURIComponent("Hello ConciergeStay, I would like to inquire about a booking.");
+  const whatsappNumber = "2349137487438"; // Replace with your target WhatsApp number
+  const whatsappMessage = encodeURIComponent("Hello Sunshine Concierge, I would like to inquire about a booking.");
 
   return (
     <footer className="border-t border-slate-800/80 bg-slate-950 py-6 text-slate-400 font-sans">
@@ -13,17 +13,12 @@ export default function Footer() {
         {/* Brand & Copyright */}
         <div className="flex items-center gap-2">
           <span className="text-white font-serif font-bold text-sm tracking-wide">
-            ConciergeStay<span className="text-cyan-400">.</span>
+            <span className="text-yellow-400">Sunshine</span>Concierge<span className="text-yellow-400">.</span>
           </span>
           <span className="text-slate-600">|</span>
           <span className="text-slate-500">© {new Date().getFullYear()} All rights reserved.</span>
         </div>
 
-        {/* Center Legal Links */}
-        <div className="flex items-center gap-6 text-slate-400">
-          <a href="#" className="hover:text-cyan-400 transition">Privacy Policy</a>
-          <a href="#" className="hover:text-cyan-400 transition">Terms of Service</a>
-        </div>
 
         {/* Social Handles  */}
         <div className="flex items-center gap-4 text-slate-400">
@@ -36,12 +31,6 @@ export default function Footer() {
             </svg>
           </a>
 
-          {/* Facebook */}
-          <a href="https://facebook.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition" aria-label="Facebook">
-            <svg className="h-4 w-4 fill-current" viewBox="0 0 24 24">
-              <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-            </svg>
-          </a>
 
           {/* X (Twitter) */}
           <a href="https://twitter.com" target="_blank" rel="noopener noreferrer" className="hover:text-white transition" aria-label="X">
@@ -49,6 +38,12 @@ export default function Footer() {
               <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
             </svg>
           </a>
+        </div>
+
+        {/*  Legal Links */}
+        <div className="flex items-center gap-6 text-slate-400">
+          <a href="#" className="hover:text-yellow-400 transition">Privacy Policy</a>
+          <a href="#" className="hover:text-yellow-400 transition">Terms of Service</a>
         </div>
       </div>
     </footer>

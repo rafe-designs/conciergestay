@@ -4,8 +4,8 @@ import React from 'react';
 import { MessageSquare } from 'lucide-react';
 
 export default function WhatsAppFloatingButton() {
-  const whatsappNumber = "2348000000000"; // Replace with your target WhatsApp phone number
-  const whatsappMessage = encodeURIComponent("Hello ConciergeStay, I would like to inquire about a booking.");
+  const whatsappNumber = "2349137487438"; // Replace with your target WhatsApp phone number
+  const whatsappMessage = encodeURIComponent("Hello Sunshine Concierge, I would like to inquire about a booking.");
 
   return (
     <a
@@ -13,7 +13,7 @@ export default function WhatsAppFloatingButton() {
       target="_blank"
       rel="noopener noreferrer"
       aria-label="Chat on WhatsApp"
-      className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-mono text-xs font-bold py-3 px-4 rounded-full shadow-2xl shadow-emerald-500/30 border border-emerald-300/40 hover:scale-105 active:scale-95 transition-all duration-300 group"
+      className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-mono text-xs font-bold py-3 px-4 rounded-full shadow-2xl shadow-yellow-500/30 border border-yellow-300/40 hover:scale-105 active:scale-95 transition-all duration-300 group"
     >
       {/* WhatsApp SVG Icon */}
       <svg

@@ -34,35 +34,93 @@ const sanitizeReference = (ref: string): string => {
   return clean;
 };
 
-// Helper: Formats nested meal objects into clean text lines (e.g., "Breakfast: Yam and Garden Egg (₦5,000)")
-const parseMealDetails = (dailyMealSelections: any) => {
+// Helper: Formats nested meal objects into clean text lines matching prep modes
+const parseMealDetails = (dailyMealSelections: any, nights: number = 1) => {
   const parsed = safeParseJson(dailyMealSelections);
   let formattedLines: string[] = [];
   let totalMealCost = 0;
 
-  if (typeof parsed === 'object' && parsed !== null) {
-    Object.entries(parsed).forEach(([dateOrCategory, val]: [string, any]) => {
-      if (typeof val === 'object' && val !== null) {
-        Object.entries(val).forEach(([timeSlot, item]: [string, any]) => {
-          let name = '';
-          let cost = 0;
+  const prepModes = parsed.prepModes || {};
 
-          if (typeof item === 'object' && item !== null) {
-            name = item.name || item.title || item.dish || item.mealName || item.item || '';
-            cost = Number(item.price || item.amount || item.cost || 0);
-          } else if (typeof item === 'string') {
-            name = item;
+  // Helper pricing dictionaries matching frontend layout
+  const getSoupBasePrice = (soupKey: string, liters: number) => {
+    let base = 35000; // default for 1L egusi/general
+    if (soupKey.includes('egusi')) base = 35000;
+    return base * (liters || 1);
+  };
+
+  const getProteinPrice = (proteinId: string) => {
+    if (proteinId.includes('beef')) return 6000;
+    if (proteinId.includes('chicken')) return 10000;
+    if (proteinId.includes('goat')) return 8000;
+    if (proteinId.includes('turkey')) return 12000;
+    if (proteinId.includes('fish')) return 9000;
+    return 5000;
+  };
+
+  // 1. Parse Soups Section
+  if (parsed.soups && typeof parsed.soups === 'object') {
+    Object.entries(parsed.soups).forEach(([dateStr, soupItems]: [string, any]) => {
+      const mode = prepModes[dateStr] || prepModes[''] || 'delivery';
+      const isChef = mode === 'in_house' || mode === 'in-house';
+      const modeLabel = isChef ? 'IN-HOUSE CHEF' : 'DELIVERY';
+
+      if (soupItems && typeof soupItems === 'object') {
+        Object.entries(soupItems).forEach(([soupKey, soupVal]: [string, any]) => {
+          const cleanSoupName = soupKey.replace(/^sp_/, '').toUpperCase();
+          const liters = Number(soupVal?.liters || 1);
+          const soupCost = getSoupBasePrice(soupKey, liters);
+
+          formattedLines.push(`${cleanSoupName} (${liters}L) [${modeLabel}] - ₦${soupCost.toLocaleString()}`);
+          totalMealCost += soupCost;
+
+          // Swallow
+          if (soupVal?.swallow) {
+            formattedLines.push(`  ↳ Swallow: ${String(soupVal.swallow).toUpperCase()}`);
           }
 
+          // Proteins
+          if (Array.isArray(soupVal?.proteins)) {
+            soupVal.proteins.forEach((p: any) => {
+              const pId = p?.id || p?.proteinId || '';
+              const pQty = Number(p?.qty || p?.quantity || 1);
+              const cleanPName = pId.replace(/^pr_/, '').toUpperCase();
+              const pCost = getProteinPrice(pId) * pQty;
+              formattedLines.push(`  + Protein: ${cleanPName} (${pQty} pcs) - ₦${pCost.toLocaleString()}`);
+              totalMealCost += pCost;
+            });
+          }
+        });
+      }
+    });
+  }
+
+  // 2. Parse Standard Meals Section if present
+  if (parsed.meals && typeof parsed.meals === 'object') {
+    Object.entries(parsed.meals).forEach(([dateStr, mealItems]: [string, any]) => {
+      const mode = prepModes[dateStr] || prepModes[''] || 'delivery';
+      const isChef = mode === 'in_house' || mode === 'in-house';
+      const modeLabel = isChef ? 'IN-HOUSE CHEF' : 'DELIVERY';
+
+      if (mealItems && typeof mealItems === 'object') {
+        Object.entries(mealItems).forEach(([slot, item]: [string, any]) => {
+          const name = item?.name || item?.title || item?.dish || String(item || '');
+          const cost = Number(item?.price || item?.amount || 0);
           if (name) {
-            const slotLabel = timeSlot.charAt(0).toUpperCase() + timeSlot.slice(1);
-            const lineCost = cost > 0 ? ` (₦${cost.toLocaleString()})` : '';
-            formattedLines.push(`${slotLabel}: ${name}${lineCost}`);
+            formattedLines.push(`${slot.toUpperCase()}: ${name} [${modeLabel}]${cost > 0 ? ` - ₦${cost.toLocaleString()}` : ''}`);
             totalMealCost += cost;
           }
         });
       }
     });
+  }
+
+  // Add In-House Chef Surcharge if any day is marked in-house
+  const hasInHouseChef = Object.values(prepModes).includes('in_house') || Object.values(prepModes).includes('in-house');
+  if (hasInHouseChef) {
+    const chefFee = 20000 * nights;
+    formattedLines.push(`In-House Chef Daily Service Charge (${nights} nights) - ₦${chefFee.toLocaleString()}`);
+    totalMealCost += chefFee;
   }
 
   return { formattedLines, totalMealCost };
@@ -79,7 +137,7 @@ const computeDepartmentalBreakdown = (addons: any, dailyMealSelections: any, nig
   let beddings = 0;
   let shopper = 0;
 
-  const { totalMealCost } = parseMealDetails(dailyMealSelections);
+  const { totalMealCost } = parseMealDetails(dailyMealSelections, nights);
   kitchen = totalMealCost;
 
   if (kitchen === 0 && (addons?.kitchen || addons?.food || addons?.meals)) {
@@ -87,34 +145,69 @@ const computeDepartmentalBreakdown = (addons: any, dailyMealSelections: any, nig
     kitchen = Number(k?.price || k?.amount || k?.total || 0);
   }
 
-  // 2. Chauffeur Service
-  if (addons?.chauffeur || addons?.chauffeurService) {
-    const c = addons?.chauffeur || addons?.chauffeurService;
-    const baseRate = Number(c?.baseRate || c?.price || c?.amount || 0);
-    chauffeur = baseRate > 0 ? baseRate * nights : Number(c?.total || 0);
+  // 2. Chauffeur Service (Ignore 'none')
+  const chauffeurVal = addons?.chauffeur || addons?.chauffeurService;
+  if (chauffeurVal && !['none', 'None', 'No Dedicated Chauffeur', 'false'].includes(String(chauffeurVal))) {
+    const c = chauffeurVal;
+    const baseRate = typeof c === 'object' ? Number(c?.baseRate || c?.price || c?.amount || 0) : 0;
+    if (baseRate > 0) {
+      chauffeur = baseRate * nights;
+    } else {
+      if (typeof c === 'string') {
+        if (c === 'sedan') chauffeur = 250000 * nights;
+        else if (c === 'luxury_sedan') chauffeur = 350000 * nights;
+        else if (c === 'commuter') chauffeur = 150000 * nights;
+      } else if (typeof c === 'object') {
+        chauffeur = Number(c?.total || 0);
+      }
+    }
   }
 
-  // 3. Airport Transfer
-  if (addons?.airport || addons?.airportTransfer) {
-    const a = addons?.airport || addons?.airportTransfer;
-    const baseRate = Number(a?.baseRate || a?.price || a?.amount || 0);
-    const tripType = String(a?.tripType || a?.direction || '').toLowerCase();
+  // 3. Airport Transfer (Ignore 'none')
+  const airportVal = addons?.airport || addons?.airportTransfer || addons?.airportTransferType;
+  if (airportVal && !['none', 'None', 'No Airport Transfer', 'false'].includes(String(airportVal))) {
+    const a = airportVal;
+    let baseRate = typeof a === 'object' ? Number(a?.baseRate || a?.price || a?.amount || 0) : 0;
+    
+    if (baseRate === 0) {
+      if (String(a) === 'sedans' || String(a) === 'sedan') baseRate = 45000;
+      else if (String(a) === 'suv') baseRate = 85000;
+    }
+
+    const tripTypeObj = addons?.airportTripDirection || (typeof a === 'object' ? a?.tripType || a?.direction : '') || '';
+    const tripType = String(tripTypeObj).toLowerCase();
     const multiplier = tripType.includes('round') || tripType.includes('2x') ? 2 : 1;
-    airport = baseRate > 0 ? baseRate * multiplier : Number(a?.total || 0);
+    
+    airport = baseRate > 0 ? baseRate * multiplier : Number((typeof a === 'object' ? a?.total : 0) || 0);
   }
 
-  // 4. Close Protection / Security
-  if (addons?.security || addons?.securityService) {
-    const s = addons?.security || addons?.securityService;
-    const baseRate = Number(s?.baseRate || s?.price || s?.amount || 0);
-    const guards = Number(s?.count || s?.guards || s?.personnel || 1);
-    security = baseRate > 0 ? baseRate * guards * nights : Number(s?.total || 0);
+  // 4. Close Protection / Security (Ignore 'none')
+  const securityVal = addons?.security || addons?.securityService;
+  if (securityVal && !['none', 'None', 'No Additional Security', 'false'].includes(String(securityVal))) {
+    const s = securityVal;
+    let baseRate = typeof s === 'object' ? Number(s?.baseRate || s?.price || s?.amount || 0) : 0;
+
+    if (baseRate === 0) {
+      if (String(s) === 'tactical') baseRate = 80000;
+      else if (String(s) === 'bodyguard') baseRate = 120000;
+      else if (String(s) === 'bouncer') baseRate = 200000;
+    }
+
+    const guards = Number(addons?.securityCount || (typeof s === 'object' ? s?.count || s?.guards || s?.personnel : 1) || 1);
+    const cappedSec = Math.min(Math.max(1, guards), 5);
+    
+    security = baseRate > 0 ? baseRate * cappedSec * nights : Number((typeof s === 'object' ? s?.total : 0) || 0);
   }
 
   // 5. Laundry & Dry Cleaning
-  if (addons?.laundry || addons?.drycleaning) {
+  const laundryAdult = Number(addons?.laundryAdult || 0);
+  const laundryKid = Number(addons?.laundryKid || 0);
+  const laundrySuit = Number(addons?.laundrySuit || 0);
+  if (laundryAdult > 0 || laundryKid > 0 || laundrySuit > 0) {
+    laundry += laundryAdult * 1500 + laundryKid * 1000 + laundrySuit * 5000;
+  } else {
     const l = addons?.laundry || addons?.drycleaning;
-    if (typeof l === 'object') {
+    if (l && typeof l === 'object') {
       Object.entries(l).forEach(([key, val]: [string, any]) => {
         if (key === 'price' || key === 'total' || key === 'amount') return;
         const count = typeof val === 'object' ? Number(val?.count || 0) : parseInt(val || '0', 10);
@@ -124,27 +217,43 @@ const computeDepartmentalBreakdown = (addons: any, dailyMealSelections: any, nig
         }
       });
     }
-    if (laundry === 0) laundry = Number(l?.price || l?.total || l?.amount || 0);
+    if (laundry === 0 && l) laundry = Number(l?.price || l?.total || l?.amount || 0);
   }
 
   // 6. Housekeeping Service
-  if (addons?.housekeeping || addons?.cleaning) {
-    const h = addons?.housekeeping || addons?.cleaning;
-    housekeeping = Number(h?.price || h?.amount || h?.total || 0);
+  const hkVal = addons?.housekeeping || addons?.housekeepingActive;
+  if (hkVal && !['no', 'none', 'None', 'No Housekeeping Service', 'false'].includes(String(hkVal))) {
+    const schedule = addons?.housekeepingSchedule || 'daily';
+    if (schedule === 'daily') {
+      housekeeping = 25000 * nights;
+    } else {
+      const cleaningSessions = Math.max(1, Math.ceil(nights / 2));
+      housekeeping = 25000 * cleaningSessions;
+    }
   }
 
   // 7. Extra Beddings & Linen
-  if (addons?.beddings || addons?.linen) {
-    const b = addons?.beddings || addons?.linen;
-    beddings = Number(b?.price || b?.amount || b?.total || 0);
+  const beddingVal = addons?.beddingBeddings || addons?.beddings;
+  if (beddingVal && !['no', 'none', 'Standard (No Daily Change)', 'false'].includes(String(beddingVal))) {
+    beddings += 10000 * nights;
+  }
+  const towelVal = addons?.beddingTowels;
+  if (towelVal && !['no', 'none', 'Standard Towel Rotation', 'false'].includes(String(towelVal))) {
+    beddings += 3000 * nights;
   }
 
   // 8. Personal Shopper Service
-  if (addons?.shopper || addons?.personalShopper) {
+  const shoppersCount = Number(addons?.shoppersCount || 0);
+  if (shoppersCount > 0) {
+    const cappedShoppers = Math.min(shoppersCount, 5);
+    shopper = cappedShoppers * 15000 * nights;
+  } else {
     const sh = addons?.shopper || addons?.personalShopper;
-    const baseRate = Number(sh?.baseRate || sh?.price || sh?.amount || 0);
-    const count = Number(sh?.count || sh?.shoppers || 1);
-    shopper = baseRate > 0 ? baseRate * count * nights : Number(sh?.total || 0);
+    if (sh && !['none', 'false'].includes(String(sh))) {
+      const baseRate = typeof sh === 'object' ? Number(sh?.baseRate || sh?.price || sh?.amount || 0) : 15000;
+      const count = Number(sh?.count || sh?.shoppers || 1);
+      shopper = baseRate > 0 ? baseRate * count * nights : Number(sh?.total || 0);
+    }
   }
 
   const servicesTotalSum =
@@ -185,7 +294,7 @@ export async function GET() {
       const nights = Math.max(1, Number(b.totalNights) || 1);
 
       const cleanRef = sanitizeReference(b.paymentReference || b.id);
-      const { formattedLines, totalMealCost } = parseMealDetails(parsedMeals);
+      const { formattedLines, totalMealCost } = parseMealDetails(parsedMeals, nights);
       const deptBreakdown = computeDepartmentalBreakdown(parsedAddons, parsedMeals, nights);
 
       const resolvedListing =

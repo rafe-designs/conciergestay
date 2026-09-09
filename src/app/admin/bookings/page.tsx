@@ -85,22 +85,39 @@ const extractNumber = (val: any): number => {
   return 0;
 };
 
+const getProteinUnitPrice = (proteinName: string): number => {
+  const p = proteinName.toLowerCase();
+  if (p.includes('beef')) return 6000;
+  if (p.includes('goat')) return 8000;
+  if (p.includes('chicken')) return 10000;
+  if (p.includes('turkey')) return 12000;
+  if (p.includes('assorted')) return 9000;
+  if (p.includes('fresh fish')) return 14000;
+  if (p.includes('catfish')) return 16000;
+  if (p.includes('croaker')) return 16000;
+  if (p.includes('stockfish')) return 12000;
+  if (p.includes('snail')) return 16000;
+  if (p.includes('cow leg')) return 8000;
+  if (p.includes('cow tail')) return 10000;
+  if (p.includes('shaki') || p.includes('tripe')) return 7000;
+  return 5000;
+};
+
 const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalCost: number } => {
   const addons = parseJson(booking?.addons);
-  const mealsObj = parseJson(booking?.dailyMealSelections || booking?.meals || addons?.kitchen || addons?.food || addons?.meals);
+  const mealsObj = parseJson(
+    booking?.dailyMealSelections || 
+    booking?.meals || 
+    addons?.kitchen || 
+    addons?.food || 
+    addons?.meals ||
+    addons?.kitchenSelections
+  );
 
+  const globalServiceMode = String(mealsObj?.serviceMode || mealsObj?.prepMode || '').toLowerCase();
   const explicitTotal = extractNumber(
-    booking?.kitchenTotal ||
-    booking?.mealTotal ||
-    booking?.mealsPrice ||
-    booking?.foodTotal ||
-    mealsObj?.totalPrice ||
-    mealsObj?.grandTotal ||
-    mealsObj?.total ||
-    mealsObj?.calculatedTotal ||
-    addons?.kitchenTotal ||
-    addons?.mealTotal ||
-    addons?.kitchen?.total
+    booking?.kitchenTotal || booking?.mealTotal || booking?.mealsPrice || booking?.foodTotal ||
+    mealsObj?.totalPrice || mealsObj?.grandTotal || mealsObj?.total || addons?.kitchenTotal
   );
 
   const itemNames: string[] = [];
@@ -112,135 +129,217 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
 
   const processDishNode = (key: string, dishNode: any) => {
     if (!dishNode || typeof dishNode !== 'object') return;
-
     const rawName = dishNode.name || dishNode.title || key;
-    if (!rawName || ['serviceMode', 'prepMode', 'prepModes', 'totalPrice', 'grandTotal'].includes(rawName)) return;
+    if (!rawName || ['serviceMode', 'prepMode', 'totalPrice'].includes(String(rawName))) return;
 
-    const dishName = String(rawName)
-      .replace(/^(rc_|sp_|pr_|sw_|p_|s_)/gi, '')
-      .replace(/_/g, ' ')
-      .trim();
+    const dishName = String(rawName).replace(/^(rc_|sp_|pr_|sw_|p_|s_)/gi, '').replace(/_/g, ' ').trim();
+    const localServiceMode = String(dishNode.serviceMode || globalServiceMode).toLowerCase();
+    const isInHouse = localServiceMode.includes('house') || localServiceMode.includes('chef');
 
     const liters = dishNode.liters ? Number(dishNode.liters) : undefined;
-    
-    const dishPrice = extractNumber(
-      dishNode.price || dishNode.amount || dishNode.cost || dishNode.totalPrice || dishNode.total || dishNode.basePrice
-    );
-    calculatedCost += dishPrice;
+    let baseDishPrice = extractNumber(dishNode.price || dishNode.amount || dishNode.cost || dishNode.totalPrice);
 
-    let dishLabel = dishName.toUpperCase();
-    if (liters) dishLabel += ` (${liters}L)`;
-    if (dishPrice > 0) dishLabel += ` - ₦${dishPrice.toLocaleString()}`;
-    itemNames.push(dishLabel);
-
-    // Swallows
-    const swallow = dishNode.swallow || dishNode.swallows || dishNode.swallowId;
-    if (swallow) {
-      if (typeof swallow === 'string') {
-        const cleanSwallow = swallow.replace(/^sw_/, '').replace(/_/g, ' ').trim().toUpperCase();
-        itemNames.push(`SWALLOW: ${cleanSwallow}`);
-      } else if (Array.isArray(swallow)) {
-        swallow.forEach((s) => {
-          if (typeof s === 'string') {
-            itemNames.push(`SWALLOW: ${s.replace(/^sw_/, '').replace(/_/g, ' ').trim().toUpperCase()}`);
-          } else if (typeof s === 'object' && s !== null) {
-            const sName = String(s.name || s.title || s.id || 'swallow').replace(/^sw_/, '').replace(/_/g, ' ').trim().toUpperCase();
-            const sPrice = extractNumber(s.price || s.amount || s.cost);
-            if (sPrice > 0) calculatedCost += sPrice;
-            itemNames.push(`SWALLOW: ${sName}${sPrice > 0 ? ` (₦${sPrice.toLocaleString()})` : ''}`);
-          }
-        });
-      } else if (typeof swallow === 'object' && swallow !== null) {
-        const sName = String(swallow.name || swallow.title || swallow.id || 'swallow').replace(/^sw_/, '').replace(/_/g, ' ').trim().toUpperCase();
-        const sPrice = extractNumber(swallow.price || swallow.amount || swallow.cost);
-        if (sPrice > 0) calculatedCost += sPrice;
-        itemNames.push(`SWALLOW: ${sName}${sPrice > 0 ? ` (₦${sPrice.toLocaleString()})` : ''}`);
-      }
+    if (baseDishPrice === 0) {
+      baseDishPrice = dishName.toLowerCase().includes('jollof') ? (isInHouse ? 60000 : 40000) : (isInHouse ? 50000 : 35000);
     }
 
-    // Proteins & Add-ons
-    const rawProteins = dishNode.proteinAddons || dishNode.proteins || dishNode.proteinIds || dishNode.selectedProteins || dishNode.protein;
+    let currentDishSubtotal = (liters && liters > 0 ? baseDishPrice * liters : baseDishPrice);
+    let dishLabel = `${dishName.toUpperCase()}${isInHouse ? ' (IN-HOUSE CHEF)' : ' (DELIVERY)'}${liters ? ` (${liters}L)` : ''}`;
+
+    let proteinSubtotal = 0;
+    const proteinLines: string[] = [];
+    const rawProteins = dishNode.proteinAddons || dishNode.proteins || dishNode.proteinIds || dishNode.selectedProteins;
+
     if (rawProteins) {
+      const processProteinItem = (pName: string, qty: number, unitPrice: number, priceOverride?: number) => {
+        const uPrice = unitPrice || getProteinUnitPrice(pName);
+        const price = priceOverride || (qty * uPrice);
+        proteinSubtotal += price;
+        proteinLines.push(`  + Protein: ${pName} (${qty} pcs) - ₦${price.toLocaleString()}`);
+      };
+
       if (Array.isArray(rawProteins)) {
-        const proteinCounts: Record<string, { qty: number; price: number }> = {};
-
         rawProteins.forEach((p) => {
-          if (typeof p === 'string') {
-            const cleanP = p.replace(/^pr_/, '').replace(/_/g, ' ').trim().toUpperCase();
-            if (!proteinCounts[cleanP]) proteinCounts[cleanP] = { qty: 0, price: 0 };
-            proteinCounts[cleanP].qty += 1;
-          } else if (typeof p === 'object' && p !== null) {
-            const cleanP = String(p.name || p.id || p.title || 'protein').replace(/^pr_/, '').replace(/_/g, ' ').trim().toUpperCase();
-            const qty = extractNumber(p.qty || p.quantity || p.count || 1);
-            const price = extractNumber(p.price || p.amount || p.total || p.cost);
-            if (!proteinCounts[cleanP]) proteinCounts[cleanP] = { qty: 0, price: 0 };
-            proteinCounts[cleanP].qty += qty;
-            proteinCounts[cleanP].price += price;
+          if (typeof p === 'string') processProteinItem(p.replace(/^pr_/, '').replace(/_/g, ' ').toUpperCase(), 1, 0);
+          else if (p && typeof p === 'object') {
+            processProteinItem(String(p.name || p.id || 'protein').replace(/^pr_/, '').replace(/_/g, ' ').toUpperCase(), extractNumber(p.qty || 1), extractNumber(p.unitPrice), extractNumber(p.price));
           }
-        });
-
-        Object.entries(proteinCounts).forEach(([pName, info]) => {
-          calculatedCost += info.price;
-          const priceLabel = info.price > 0 ? ` - ₦${info.price.toLocaleString()}` : '';
-          itemNames.push(`+ ${pName} (${info.qty} pcs)${priceLabel}`);
         });
       } else if (typeof rawProteins === 'object') {
         Object.entries(rawProteins).forEach(([pKey, pVal]: [string, any]) => {
-          const cleanP = pKey.replace(/^pr_/, '').replace(/_/g, ' ').trim().toUpperCase();
-          let qty = 1;
-          let price = 0;
-          if (typeof pVal === 'number') {
-            price = pVal;
-          } else if (typeof pVal === 'object' && pVal !== null) {
-            qty = extractNumber(pVal.qty || pVal.quantity || pVal.count || 1);
-            price = extractNumber(pVal.price || pVal.amount || pVal.total || pVal.cost);
-          }
-          calculatedCost += price;
-          const priceLabel = price > 0 ? ` - ₦${price.toLocaleString()}` : '';
-          itemNames.push(`+ ${cleanP} (${qty} pcs)${priceLabel}`);
+          const cleanP = pKey.replace(/^pr_/, '').replace(/_/g, ' ').toUpperCase();
+          if (typeof pVal === 'number') processProteinItem(cleanP, 1, pVal, pVal);
+          else if (pVal && typeof pVal === 'object') processProteinItem(cleanP, extractNumber(pVal.qty || 1), extractNumber(pVal.unitPrice), extractNumber(pVal.price));
+          else processProteinItem(cleanP, 1, 0);
         });
       }
     }
+
+    currentDishSubtotal += proteinSubtotal;
+    dishLabel += ` - ₦${currentDishSubtotal.toLocaleString()}`;
+    itemNames.push(dishLabel);
+    proteinLines.forEach(pl => itemNames.push(pl));
+    calculatedCost += currentDishSubtotal;
   };
 
   const traverse = (node: any) => {
     if (!node || typeof node !== 'object') return;
-    if (Array.isArray(node)) {
-      node.forEach((item) => traverse(item));
-      return;
-    }
-
+    if (Array.isArray(node)) { node.forEach(item => traverse(item)); return; }
     Object.entries(node).forEach(([key, val]) => {
-      if (['prepModes', 'prep_modes', 'serviceMode', 'totalPrice', 'grandTotal'].includes(key)) return;
-
-      const parsedVal = parseJson(val);
-      if (typeof parsedVal === 'object' && parsedVal !== null) {
-        const isDish =
-          parsedVal.name ||
-          parsedVal.title ||
-          parsedVal.price !== undefined ||
-          parsedVal.amount !== undefined ||
-          parsedVal.cost !== undefined ||
-          parsedVal.proteinIds ||
-          parsedVal.proteinAddons ||
-          parsedVal.proteins ||
-          parsedVal.liters ||
-          parsedVal.swallow ||
-          parsedVal.swallows;
-
-        if (isDish) {
-          processDishNode(key, parsedVal);
+      if (['prepModes', 'serviceMode', 'totalPrice'].includes(key)) return;
+      const parsed = parseJson(val);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.name || parsed.title || parsed.price !== undefined || parsed.proteinIds || parsed.proteins || parsed.liters) {
+          processDishNode(key, parsed);
         } else {
-          traverse(parsedVal);
+          traverse(parsed);
         }
       }
     });
   };
 
   traverse(mealsObj);
+  return { names: Array.from(new Set(itemNames)), totalCost: explicitTotal > 0 ? explicitTotal : calculatedCost };
+};
 
-  const finalTotal = explicitTotal > 0 ? explicitTotal : calculatedCost;
-  return { names: Array.from(new Set(itemNames)), totalCost: finalTotal };
+// --- CONCIERGE ADD-ON LIBRARY (DYNAMIC CATALOGUE PRICING) ---
+const CONCIERGE_CATALOGUE: Record<DepartmentKey, { baseRate: number; calculate: (booking: Booking, addons: any, nights: number) => { cost: number; lines: string[] } }> = {
+  kitchen: {
+    baseRate: 0,
+    calculate: (booking: Booking) => {
+      const { totalCost, names } = parseKitchenDetailsAndCost(booking);
+      return { cost: totalCost, lines: names };
+    }
+  },
+  housekeeping: {
+    baseRate: 25000,
+    calculate: (booking: Booking, addons: any, nights: number) => {
+      const hkObj = addons?.housekeeping || addons?.housekeepingService || booking?.housekeeping;
+      const explicit = extractNumber(typeof hkObj === 'object' ? (hkObj.total || hkObj.price || hkObj.amount) : hkObj);
+      const active = booking.housekeepingActive || addons?.housekeepingActive || 'yes';
+      if (String(active).toLowerCase() === 'no' || String(active).toLowerCase() === 'false') return { cost: 0, lines: [] };
+      const cost = explicit > 0 ? explicit : 25000 * nights;
+      return { cost, lines: [`Housekeeping Service (${nights} Night(s)) - ₦${cost.toLocaleString()}`] };
+    }
+  },
+  chauffeur: {
+    baseRate: 25000,
+    calculate: (booking: Booking, addons: any, nights: number) => {
+      const cObj = addons?.chauffeur || addons?.chauffeurService || addons?.chauffeur_service || booking?.chauffeur;
+      const vehicleType = String(typeof cObj === 'object' ? (cObj.car || cObj.vehicle || cObj.type || '') : (cObj || booking.chauffeurType || '')).toLowerCase();
+      
+      let rate = 25000;
+      if (vehicleType.includes('commuter') || vehicleType.includes('executive_commuter')) rate = 150000;
+      else if (vehicleType.includes('luxury') || vehicleType.includes('luxury_sedan')) rate = 350000;
+
+      const explicitRate = extractNumber(typeof cObj === 'object' ? (cObj.baseRate || cObj.price || cObj.amount || cObj.total) : 0);
+      const rateToUse = explicitRate > 0 ? explicitRate : rate;
+      const cost = rateToUse * nights;
+      const cleanName = vehicleType ? vehicleType.replace(/_/g, ' ').toUpperCase() : 'EXECUTIVE SEDAN';
+      return { cost, lines: [`Chauffeur: ${cleanName} (${nights} Day(s)) - ₦${cost.toLocaleString()}`] };
+    }
+  },
+  airport: {
+    baseRate: 45000,
+    calculate: (booking: Booking, addons: any) => {
+      const aObj = addons?.airport || addons?.airportTransfer || addons?.airport_transfer || booking?.airport;
+      const transferType = String(booking.airportTransferType || (typeof aObj === 'object' ? (aObj.type || aObj.vehicle || aObj.car || '') : (aObj || ''))).toLowerCase();
+      const tripType = String(booking.airportTripDirection || booking.airportTripType || booking.tripType || (typeof aObj === 'object' ? (aObj.type || aObj.tripType || aObj.direction || aObj.trip || '') : '')).toLowerCase();
+
+      let rate = 45000;
+      if (transferType.includes('luxury')) rate = 85000;
+      const explicit = extractNumber(typeof aObj === 'object' ? (aObj.baseRate || aObj.price || aObj.amount || aObj.total) : 0);
+      const rateToUse = explicit > 0 ? explicit : rate;
+      
+      const isRound = tripType.includes('round') || tripType.includes('return') || tripType.includes('both');
+      const multiplier = isRound ? 2 : 1;
+      const cost = rateToUse * multiplier;
+      return { cost, lines: [`Airport Transfer (${isRound ? 'Round-Trip' : 'One-Way'}) - ₦${cost.toLocaleString()}`] };
+    }
+  },
+  security: {
+    baseRate: 80000,
+    calculate: (booking: Booking, addons: any, nights: number) => {
+      const sObj = addons?.security || addons?.securityService || booking?.security;
+      const secType = String(booking.securityType || (typeof sObj === 'object' ? (sObj.type || sObj.category || '') : (sObj || 'tactical'))).toLowerCase();
+      
+      let rate = 80000;
+      if (secType.includes('executive')) rate = 120000;
+      else if (secType.includes('bouncer')) rate = 200000;
+
+      const explicit = extractNumber(typeof sObj === 'object' ? (sObj.baseRate || sObj.price || sObj.amount || sObj.total) : 0);
+      const rateToUse = explicit > 0 ? explicit : rate;
+      const count = Number(booking.securityCount || addons?.securityCount || (typeof sObj === 'object' ? (sObj.count || 1) : 1));
+      const cost = rateToUse * count * nights;
+      return { cost, lines: [`Security: ${secType.toUpperCase()} (${count} Guard(s) × ${nights} Days) - ₦${cost.toLocaleString()}`] };
+    }
+  },
+  laundry: {
+    baseRate: 15000,
+    calculate: (booking: Booking, addons: any) => {
+      const adult = Number(booking.laundryAdult || addons?.laundryAdult || 0);
+      const kid = Number(booking.laundryKid || addons?.laundryKid || 0);
+      const suit = Number(booking.laundrySuit || addons?.laundrySuit || 0);
+      const calc = (adult * 1500) + (kid * 1000) + (suit * 3000);
+
+      const lObj = addons?.laundry || addons?.drycleaning || booking?.laundry;
+      const explicit = extractNumber(typeof lObj === 'object' ? (lObj.total || lObj.price || lObj.amount) : lObj);
+      const cost = explicit > 0 ? explicit : (calc > 0 ? calc : 15000);
+
+      const lines = [];
+      if (adult > 0) lines.push(`  + Adult Pcs: ${adult} (₦${(adult * 1500).toLocaleString()})`);
+      if (kid > 0) lines.push(`  + Kid Pcs: ${kid} (₦${(kid * 1000).toLocaleString()})`);
+      if (suit > 0) lines.push(`  + Suit Pcs: ${suit} (₦${(suit * 3000).toLocaleString()})`);
+      if (lines.length === 0) lines.push(`Laundry Service - ₦${cost.toLocaleString()}`);
+      return { cost, lines };
+    }
+  },
+  beddings: {
+    baseRate: 13000,
+    calculate: (booking: Booking, addons: any, nights: number) => {
+      const bBedding = booking.beddingBeddings ?? addons?.beddingBeddings ?? true;
+      const bTowels = booking.beddingTowels ?? addons?.beddingTowels ?? true;
+      let cost = 0;
+      const lines = [];
+
+      if (bBedding && String(bBedding).toLowerCase() !== 'no' && String(bBedding).toLowerCase() !== 'false') {
+        cost += 10000 * nights;
+        lines.push(`Beddings Package (₦10k × ${nights} nights)`);
+      }
+      if (bTowels && String(bTowels).toLowerCase() !== 'no' && String(bTowels).toLowerCase() !== 'false') {
+        cost += 3000 * nights;
+        lines.push(`Towels Package (₦3k × ${nights} nights)`);
+      }
+      const finalCost = cost > 0 ? cost : 13000 * nights;
+      return { cost: finalCost, lines: lines.length > 0 ? lines : [`Beddings & Linens - ₦${(13000 * nights).toLocaleString()}`] };
+    }
+  },
+  shopper: {
+    baseRate: 15000,
+    calculate: (booking: Booking, addons: any, nights: number) => {
+      const count = Number(booking.shoppersCount || addons?.shoppersCount || 1);
+      const explicit = extractNumber(addons?.shopperTotal || booking?.shopperTotal);
+      const cost = explicit > 0 ? explicit : 15000 * count * nights;
+      return { cost, lines: [`Personal Shopper (${count} Shopper(s) × ${nights} Days) - ₦${cost.toLocaleString()}`] };
+    }
+  }
+};
+
+const isBookingActiveForDepartment = (b: Booking, deptId: DepartmentKey): boolean => {
+  const directRev = Number(b[`${deptId}Revenue`]);
+  if (!isNaN(directRev) && directRev > 0) return true;
+  if (b.departmentalBreakdown && Number(b.departmentalBreakdown[deptId]) > 0) return true;
+
+  const addons = parseJson(b?.addons);
+  const catalogEntry = CONCIERGE_CATALOGUE[deptId];
+  if (catalogEntry) {
+    const nights = Math.max(1, Number(b?.totalNights) || 1);
+    const result = catalogEntry.calculate(b, addons, nights);
+    if (result.cost > 0 || result.lines.length > 0) return true;
+  }
+
+  const val = b[deptId] || addons[deptId] || addons[`${deptId}Service`] || (b.departmentalBreakdown && b.departmentalBreakdown[deptId]);
+  return val !== undefined && val !== null && val !== '' && val !== false && val !== 'false' && val !== 'none';
 };
 
 const calculateSingleBookingDeptRevenue = (b: Booking, config: DeptConfig): number => {
@@ -250,38 +349,14 @@ const calculateSingleBookingDeptRevenue = (b: Booking, config: DeptConfig): numb
     return b.departmentalBreakdown[config.id];
   }
 
-  if (config.id === 'kitchen') {
-    const { totalCost } = parseKitchenDetailsAndCost(b);
-    return totalCost;
-  }
-
-  let fallbackRev = 0;
   const addons = parseJson(b?.addons);
   const nights = Math.max(1, Number(b?.totalNights) || 1);
+  const catalogEntry = CONCIERGE_CATALOGUE[config.id];
 
-  if (config.id === 'chauffeur') {
-    const c = addons?.chauffeur || addons?.chauffeurService;
-    if (c && !['None', 'false'].includes(String(c))) {
-      const rate = extractNumber(c?.baseRate || c?.price || c?.amount);
-      fallbackRev = rate > 0 ? rate * nights : 0;
-    }
-  } else if (config.id === 'airport') {
-    const a = addons?.airport || addons?.airportTransfer;
-    if (a && !['None', 'false'].includes(String(a))) {
-      const rate = extractNumber(a?.baseRate || a?.price || a?.amount);
-      const mult = String(a?.tripType || a?.direction).toLowerCase().includes('round') ? 2 : 1;
-      fallbackRev = rate > 0 ? rate * mult : 0;
-    }
-  } else if (config.id === 'security' || config.id === 'shopper') {
-    const s = addons?.[config.id] || addons?.[`${config.id}Service`] || addons?.personalShopper || addons?.securityType;
-    if (s && !['None', 'No Additional Security', 'false'].includes(String(s))) {
-      const rate = extractNumber(s?.baseRate || s?.price || s?.amount);
-      const count = extractNumber(s?.count || s?.guards || s?.shoppers || 1);
-      fallbackRev = rate > 0 ? rate * count * nights : 0;
-    }
+  if (catalogEntry) {
+    return catalogEntry.calculate(b, addons, nights).cost;
   }
-
-  return fallbackRev;
+  return 0;
 };
 
 const getBookingGrandTotal = (b: Booking): number => {
@@ -341,16 +416,11 @@ export default function AdminDashboard() {
     e.preventDefault();
     setLoginError('');
     setIsLoggingIn(true);
-
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
     } catch (err: any) {
-      setLoginError(err.message || 'Authentication failed. Please verify credentials.');
+      setLoginError(err.message || 'Authentication failed.');
     } finally {
       setIsLoggingIn(false);
     }
@@ -367,16 +437,12 @@ export default function AdminDashboard() {
     setLoading(true);
     try {
       const res = await fetch('/api/admin/bookings', {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-        }
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
       });
-
       if (res.status === 401 || res.status === 403) {
         handleLogout();
         return;
       }
-
       const data = await res.json();
       setBookings(Array.isArray(data) ? data : data?.bookings || []);
     } catch (err) {
@@ -397,12 +463,9 @@ export default function AdminDashboard() {
         const targetTime = new Date(`${selectedDate}T00:00:00`).getTime();
         const checkInRaw = b?.checkIn || b?.createdAt || b?.date;
         const checkOutRaw = b?.checkOut || checkInRaw;
-        
         if (!checkInRaw) return false;
-
         const checkInTime = new Date(checkInRaw).setHours(0, 0, 0, 0);
         const checkOutTime = new Date(checkOutRaw).setHours(23, 59, 59, 999);
-
         if (targetTime < checkInTime || targetTime > checkOutTime) return false;
       }
       if (!searchQuery.trim()) return true;
@@ -415,7 +478,9 @@ export default function AdminDashboard() {
 
   const departmentRevenues = useMemo(() => {
     const revs = {} as Record<DepartmentKey, number>;
-    DEPARTMENT_CONFIGS.forEach((c) => { revs[c.id] = filteredBookings.reduce((acc, b) => acc + calculateSingleBookingDeptRevenue(b, c), 0); });
+    DEPARTMENT_CONFIGS.forEach((c) => { 
+      revs[c.id] = filteredBookings.reduce((acc, b) => acc + calculateSingleBookingDeptRevenue(b, c), 0); 
+    });
     return revs;
   }, [filteredBookings]);
 
@@ -428,59 +493,31 @@ export default function AdminDashboard() {
   ], [apartmentsRevenue, departmentRevenues]);
 
   const activeDeptConfig = DEPARTMENT_CONFIGS.find((d) => d.id === activeTab);
+  const activeDeptBookings = useMemo(() => {
+    if (!activeDeptConfig) return [];
+    return filteredBookings.filter(b => isBookingActiveForDepartment(b, activeDeptConfig.id));
+  }, [filteredBookings, activeDeptConfig]);
 
   if (isAuthChecking) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center text-cyan-400 font-mono text-sm">
-        Authenticating Session...
-      </div>
-    );
+    return <div className="min-h-screen bg-black flex items-center justify-center text-cyan-400 font-mono text-sm">Authenticating Session...</div>;
   }
 
   if (!session) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center p-4 font-sans">
         <div className="w-full max-w-md bg-gray-950 border border-gray-800 rounded-2xl p-8 space-y-6 shadow-2xl">
-          <div className="text-center space-y-2">
-            <h1 className="text-xl font-extrabold text-white tracking-wider">ADMIN ACCESS</h1>
-          </div>
-
-          {loginError && (
-            <div className="bg-red-950/50 border border-red-800 text-red-300 text-xs p-3 rounded-lg text-center font-medium">
-              {loginError}
-            </div>
-          )}
-
+          <div className="text-center space-y-2"><h1 className="text-xl font-extrabold text-white tracking-wider">ADMIN ACCESS</h1></div>
+          {loginError && <div className="bg-red-950/50 border border-red-800 text-red-300 text-xs p-3 rounded-lg text-center font-medium">{loginError}</div>}
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">Email Address</label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@domain.com"
-                className="w-full px-4 py-2.5 text-xs bg-gray-900 border border-gray-800 rounded-xl text-white focus:outline-none focus:border-cyan-500 transition"
-              />
+              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@domain.com" className="w-full px-4 py-2.5 text-xs bg-gray-900 border border-gray-800 rounded-xl text-white focus:outline-none focus:border-cyan-500 transition" />
             </div>
-
             <div>
               <label className="block text-xs font-semibold text-gray-300 mb-1.5">Password</label>
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••••••"
-                className="w-full px-4 py-2.5 text-xs bg-gray-900 border border-gray-800 rounded-xl text-white focus:outline-none focus:border-cyan-500 transition"
-              />
+              <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••••••" className="w-full px-4 py-2.5 text-xs bg-gray-900 border border-gray-800 rounded-xl text-white focus:outline-none focus:border-cyan-500 transition" />
             </div>
-
-            <button
-              type="submit"
-              disabled={isLoggingIn}
-              className="w-full py-3 text-xs font-bold rounded-xl bg-yellow-600 hover:bg-yellow-500 text-black transition cursor-pointer disabled:opacity-50 mt-2"
-            >
+            <button type="submit" disabled={isLoggingIn} className="w-full py-3 text-xs font-bold rounded-xl bg-yellow-600 hover:bg-yellow-500 text-black transition cursor-pointer disabled:opacity-50 mt-2">
               {isLoggingIn ? 'Authenticating...' : 'Sign In'}
             </button>
           </form>
@@ -537,18 +574,11 @@ export default function AdminDashboard() {
         )}
         
         {activeTab === 'apartments' && (
-          <ApartmentsTab 
-            filteredBookings={filteredBookings} 
-            apartmentsRevenue={apartmentsRevenue} 
-          />
+          <ApartmentsTab filteredBookings={filteredBookings} apartmentsRevenue={apartmentsRevenue} />
         )}
         
         {activeDeptConfig && (
-          <DepartmentSection 
-            config={activeDeptConfig} 
-            bookings={filteredBookings} 
-            revenue={departmentRevenues[activeDeptConfig.id]} 
-          />
+          <DepartmentSection config={activeDeptConfig} bookings={activeDeptBookings} revenue={departmentRevenues[activeDeptConfig.id]} />
         )}
       </main>
     </div>
@@ -600,6 +630,84 @@ function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQue
           ))}
         </div>
       </div>
+
+      <div className="p-6 rounded-xl bg-gray-950 border border-gray-800 space-y-4">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-cyan-400 border-b border-gray-800 pb-3">Recent Booking Add-ons & Service Breakdown</h3>
+        <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
+          {filteredBookings.length === 0 ? (
+            <div className="text-xs text-gray-500 italic text-center py-4">No bookings found for this view.</div>
+          ) : (
+            filteredBookings.map((b: Booking, idx: number) => {
+              const bookingKey = b.id || b.reference || `overview-booking-${idx}`;
+              const addons = parseJson(b?.addons);
+              const nights = Math.max(1, Number(b?.totalNights) || 1);
+              const activeDepts = DEPARTMENT_CONFIGS.filter(c => isBookingActiveForDepartment(b, c.id));
+              const aptRev = getBookingApartmentRevenue(b);
+              const refNo = b?.paymentReference || b?.reference || b?.id || 'N/A';
+
+              return (
+                <div key={bookingKey} className="p-4 rounded-lg bg-gray-900 border border-gray-800 space-y-3">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-2 border-b border-gray-800 pb-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-white text-sm">{b?.customerName || b?.guestName || 'Guest'}</span>
+                        <span className="px-2 py-0.5 rounded bg-gray-800 text-cyan-300 font-mono text-[10px] border border-gray-700">Ref: {refNo}</span>
+                      </div>
+                      <div className="text-gray-400 mt-0.5">
+                        <span className="text-cyan-400 font-mono">{b?.listingId || 'Suite'}</span> | 📞 {b?.phone || b?.phoneNumber || 'N/A'} | Stay: {b?.checkIn ? new Date(b.checkIn).toLocaleDateString() : 'N/A'} ({nights} Night(s))
+                      </div>
+                    </div>
+                    <span className="text-amber-400 font-mono font-bold text-xs">Total: ₦{getBookingGrandTotal(b).toLocaleString()}</span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 text-[11px]">
+                    <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono">
+                      Apartment: ₦{aptRev.toLocaleString()}
+                    </span>
+                    {activeDepts.map(dept => {
+                      const deptRev = calculateSingleBookingDeptRevenue(b, dept);
+                      return (
+                        <span key={`ov-dept-${dept.id}`} className={`px-2 py-0.5 rounded bg-gray-800 ${dept.color} border border-gray-700 font-mono`}>
+                          {dept.name}: ₦{deptRev.toLocaleString()}
+                        </span>
+                      );
+                    })}
+                    {activeDepts.length === 0 && <span className="text-gray-500 italic">No extra add-ons selected</span>}
+                  </div>
+
+                  {/* Render All Active Concierge & Kitchen Add-on Breakdown Lists */}
+                  {activeDepts.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-gray-800 space-y-3">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 block">Detailed Service & Add-on Breakdown:</span>
+                      {activeDepts.map(dept => {
+                        const catalogEntry = CONCIERGE_CATALOGUE[dept.id];
+                        if (!catalogEntry) return null;
+                        const { lines, cost } = catalogEntry.calculate(b, addons, nights);
+                        if (lines.length === 0 && cost === 0) return null;
+
+                        return (
+                          <div key={`breakdown-${dept.id}`} className="space-y-1 pl-2 border-l-2 border-cyan-500/40">
+                            <div className="flex justify-between items-center text-[11px]">
+                              <span className={`font-bold ${dept.color}`}>{dept.name}</span>
+                              <span className="font-mono text-cyan-300 font-semibold">₦{cost.toLocaleString()}</span>
+                            </div>
+                            {lines.map((line, lIdx) => (
+                              <div key={`line-${dept.id}-${lIdx}`} className="text-[11px] font-mono text-gray-300">
+                                {line}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
       <div className="pt-4 border-t border-gray-800">
         <h3 className="text-sm font-bold uppercase tracking-wider text-gray-300 mb-4">Kitchen & Operational Schedule</h3>
         <KitchenSchedule bookings={filteredBookings} showAddons={true} />
@@ -660,178 +768,66 @@ function DepartmentSection({ config, bookings, revenue }: { config: DeptConfig; 
         </div>
       </div>
       <div className="space-y-4">
-        {bookings.map((b: Booking, idx: number) => {
-          const addons = parseJson(b?.addons);
-          const deptTotal = calculateSingleBookingDeptRevenue(b, config);
-          const bookingKey = b.id || b.reference || `dept-${config.id}-${idx}`;
+        {bookings.length === 0 ? (
+          <div className="p-6 rounded-xl bg-gray-950 border border-gray-800 text-center text-gray-500 text-xs italic">
+            No active records found for {config.name}.
+          </div>
+        ) : (
+          bookings.map((b: Booking, idx: number) => {
+            const addons = parseJson(b?.addons);
+            const deptTotal = calculateSingleBookingDeptRevenue(b, config);
+            const bookingKey = b.id || b.reference || `dept-${config.id}-${idx}`;
 
-          return (
-            <div key={bookingKey} className="p-5 rounded-xl bg-gray-950 border border-gray-800 flex flex-col md:flex-row justify-between items-start gap-4">
-              <div>
-                <span className="px-2 py-0.5 text-[10px] uppercase font-mono rounded bg-gray-900 text-cyan-300 border border-gray-800">{b?.listingId || 'Suite'}</span>
-                <h3 className="text-sm font-bold text-white mt-2">{b?.customerName || 'Guest'}</h3>
-                <p className="text-xs text-amber-400 font-mono mt-1">📞 {b?.phone || b?.phoneNumber || 'N/A'}</p>
-                <p className="text-xs text-gray-400 mt-1">Stay: {b?.checkIn ? new Date(b.checkIn).toLocaleDateString() : 'N/A'} - {b?.checkOut ? new Date(b.checkOut).toLocaleDateString() : 'N/A'}</p>
-              </div>
-              <div className="bg-gray-900 p-4 rounded-xl border border-gray-800 min-w-[320px] space-y-3">
-                <span className={`text-xs font-bold block uppercase border-b border-gray-800 pb-1 ${config.color}`}>{config.name} Details</span>
-                <RenderDepartmentDetails configId={config.id} booking={b} addons={addons} />
-                <div className="pt-2 border-t border-gray-800 flex justify-between font-bold text-xs">
-                  <span className="text-gray-400 text-[11px]">Department Total:</span>
-                  <span className={`font-mono font-extrabold text-sm ${config.color}`}>₦{deptTotal.toLocaleString()}</span>
+            return (
+              <div key={bookingKey} className="p-5 rounded-xl bg-gray-950 border border-gray-800 flex flex-col md:flex-row justify-between items-start gap-4">
+                <div>
+                  <span className="px-2 py-0.5 text-[10px] uppercase font-mono rounded bg-gray-900 text-cyan-300 border border-gray-800">{b?.listingId || 'Suite'}</span>
+                  <h3 className="text-sm font-bold text-white mt-2">{b?.customerName || 'Guest'}</h3>
+                  <p className="text-xs text-amber-400 font-mono mt-1">📞 {b?.phone || b?.phoneNumber || 'N/A'}</p>
+                  <p className="text-xs text-gray-400 mt-1">Stay: {b?.checkIn ? new Date(b.checkIn).toLocaleDateString() : 'N/A'} - {b?.checkOut ? new Date(b.checkOut).toLocaleDateString() : 'N/A'}</p>
+                </div>
+                <div className="bg-gray-900 p-4 rounded-xl border border-gray-800 min-w-[340px] space-y-3">
+                  <span className={`text-xs font-bold block uppercase border-b border-gray-800 pb-1 ${config.color}`}>{config.name} Details</span>
+                  <RenderDepartmentDetails configId={config.id} booking={b} addons={addons} />
+                  <div className="pt-2 border-t border-gray-800 flex justify-between font-bold text-xs">
+                    <span className="text-gray-400 text-[11px]">Total Order:</span>
+                    <span className={`font-mono font-extrabold text-sm ${config.color}`}>₦{deptTotal.toLocaleString()}</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
     </div>
   );
 }
 
 function RenderDepartmentDetails({ configId, booking, addons }: { configId: DepartmentKey; booking: Booking; addons: any }) {
-  const deptTotal = calculateSingleBookingDeptRevenue(booking, DEPARTMENT_CONFIGS.find(c => c.id === configId)!);
-  const durationStr = `${booking?.totalNights || 1} Nights`;
+  const nights = Math.max(1, Number(booking?.totalNights) || 1);
+  const catalogEntry = CONCIERGE_CATALOGUE[configId];
 
-  const Row = ({ label, val }: any) => (
-    <div className="flex justify-between text-xs">
-      <span className="text-gray-400">{label}</span>
-      <span className="font-semibold text-cyan-300">{val}</span>
+  if (!catalogEntry) return <span className="text-xs text-gray-500 italic">No configuration found.</span>;
+
+  const { lines, cost } = catalogEntry.calculate(booking, addons, nights);
+
+  return (
+    <div className="text-xs text-gray-300 space-y-1.5">
+      {lines.length > 0 ? (
+        <div className="space-y-1 max-h-44 overflow-y-auto pr-1">
+          {lines.map((line, i) => (
+            <div key={`line-${i}`} className="font-mono text-[11px] text-cyan-300">
+              {line}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <span className="text-xs text-gray-500 italic">No selection details recorded.</span>
+      )}
+      <div className="pt-1 text-[11px] text-gray-400 font-mono border-t border-gray-800 mt-2 flex justify-between">
+        <span>Calculated Subtotal:</span>
+        <span className="text-cyan-400 font-bold">₦{cost.toLocaleString()}</span>
+      </div>
     </div>
   );
-
-  const EmptyMsg = ({ msg }: { msg: string }) => (
-    <span className="text-xs text-gray-500 italic block">{msg}</span>
-  );
-
-  if (configId === 'kitchen') {
-    const { names, totalCost } = parseKitchenDetailsAndCost(booking);
-
-    return (
-      <div className="text-xs text-gray-300 space-y-1">
-        <span className="text-gray-400 block mb-1 font-medium">Found Items & Breakdown:</span>
-        {names.length > 0 ? (
-          <ul className="list-disc list-inside space-y-1 text-cyan-300 max-h-36 overflow-y-auto">
-            {names.map((m, i) => (
-              <li key={`item-${i}`}>{m}</li>
-            ))}
-          </ul>
-        ) : (
-          <EmptyMsg msg={totalCost > 0 ? `Kitchen Allocation (₦${totalCost.toLocaleString()})` : 'No meal selections saved for this booking.'} />
-        )}
-      </div>
-    );
-  }
-
-  if (configId === 'housekeeping') {
-    const hk = addons?.housekeeping || addons?.housekeepingService;
-    const isNone = !hk || ['None', 'No Housekeeping Service', 'false'].includes(String(hk));
-    if (isNone && deptTotal === 0) return <EmptyMsg msg="No housekeeping service selected." />;
-
-    const freq = typeof hk === 'object' ? (hk.frequency || hk.schedule) : (addons?.housekeepingSchedule || 'Daily');
-    return (
-      <div className="space-y-1.5 text-xs">
-        <Row label="Service:" val={typeof hk === 'string' ? hk : 'Housekeeping Requested'} />
-        <Row label="Frequency:" val={freq} />
-        <Row label="Stay:" val={durationStr} />
-        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
-      </div>
-    );
-  }
-
-  if (configId === 'chauffeur') {
-    const c = addons?.chauffeur || addons?.chauffeurService;
-    const isNone = !c || ['None', 'No Chauffeur Service', 'false'].includes(String(c));
-    if (isNone && deptTotal === 0) return <EmptyMsg msg="No chauffeur service selected." />;
-
-    const vehicle = typeof c === 'object' ? (c.car || c.vehicle || 'Luxury Sedan') : String(c);
-    return (
-      <div className="space-y-1.5 text-xs">
-        <Row label="Vehicle:" val={vehicle} />
-        <Row label="Stay:" val={durationStr} />
-        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
-      </div>
-    );
-  }
-
-  if (configId === 'airport') {
-    const a = addons?.airport || addons?.airportTransfer;
-    const isNone = !a || ['None', 'No Airport Transfer', 'false'].includes(String(a));
-    if (isNone && deptTotal === 0) return <EmptyMsg msg="No airport transfer selected." />;
-
-    const car = typeof a === 'object' ? (a.car || 'Executive SUV') : 'Executive SUV';
-    const dir = typeof a === 'object' ? (a.direction || a.tripType) : (addons?.airportDirection || 'One-Way');
-    return (
-      <div className="space-y-1.5 text-xs">
-        <Row label="Car:" val={car} />
-        <Row label="Direction:" val={String(dir).replace(/_/g, ' ')} />
-        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
-      </div>
-    );
-  }
-
-  if (configId === 'security') {
-    const s = addons?.security || addons?.securityService || addons?.securityType;
-    const isNone = !s || ['None', 'No Additional Security', 'false'].includes(String(s));
-    if (isNone && deptTotal === 0) return <EmptyMsg msg="No additional security selected." />;
-
-    const count = typeof s === 'object' ? (s.count || s.guards || 1) : (addons?.securityCount || 1);
-    return (
-      <div className="space-y-1.5 text-xs">
-        <Row label="Detail:" val={typeof s === 'string' ? s : 'Dedicated Guard'} />
-        <Row label="Personnel:" val={`${Number(count)} Guard(s)`} />
-        <Row label="Stay:" val={durationStr} />
-        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
-      </div>
-    );
-  }
-
-  if (configId === 'laundry') {
-    const l = addons?.laundry || addons?.drycleaning;
-    const adult = Number(l?.adult || 0);
-    const kid = Number(l?.kid || 0);
-    const suit = Number(l?.suit || 0);
-    if (adult === 0 && kid === 0 && suit === 0 && deptTotal === 0) return <EmptyMsg msg="No laundry service selected." />;
-
-    return (
-      <div className="space-y-1.5 text-xs">
-        <Row label="Adult Pcs:" val={adult} />
-        <Row label="Kid Pcs:" val={kid} />
-        <Row label="Suit Pcs:" val={suit} />
-        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
-      </div>
-    );
-  }
-
-  if (configId === 'beddings') {
-    const b = addons?.beddings || addons?.linen;
-    const sel = typeof b === 'object' ? (b.selection || b.type) : b;
-    const isNone = !b || ['None', 'Standard (No Daily Change)', 'false'].includes(String(sel));
-    if (isNone && deptTotal === 0) return <EmptyMsg msg="Standard Beddings (No extra change)." />;
-
-    return (
-      <div className="space-y-1.5 text-xs">
-        <Row label="Selection:" val={String(sel)} />
-        <Row label="Stay:" val={durationStr} />
-        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
-      </div>
-    );
-  }
-
-  if (configId === 'shopper') {
-    const sh = addons?.shopper || addons?.personalShopper;
-    const isNone = !sh || ['None', 'false'].includes(String(sh));
-    if (isNone && deptTotal === 0) return <EmptyMsg msg="No personal shopper selected." />;
-
-    const count = typeof sh === 'object' ? (sh.count || sh.shoppers || 1) : 1;
-    return (
-      <div className="space-y-1.5 text-xs">
-        <Row label="Shoppers:" val={Number(count)} />
-        <Row label="Stay:" val={durationStr} />
-        <Row label="Fee Allocated:" val={`₦${deptTotal.toLocaleString()}`} />
-      </div>
-    );
-  }
-
-  return <EmptyMsg msg="No extra services recorded." />;
 }
