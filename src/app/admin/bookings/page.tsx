@@ -108,13 +108,17 @@ const getProteinUnitPrice = (proteinName: string): number => {
 const getDishUnitPrice = (dishName: string): number => {
   const d = dishName.toLowerCase();
   if (d.includes('jollof')) return 50000;
-  if (d.includes('asaro') || d.includes('yam')) return 45000;
-  if (d.includes('beans')) return 45000;
-  if (d.includes('egusi') || d.includes('soup')) return 35000;
-  if (d.includes('ukodo')) return 40000;
   if (d.includes('fried rice')) return 50000;
   if (d.includes('coconut rice')) return 50000;
-  return 35000;
+  if (d.includes('native rice')) return 45000;
+  if (d.includes('ofada')) return 55000;
+  if (d.includes('asaro') || d.includes('yam')) return 40000;
+  if (d.includes('beans')) return 40000;
+  if (d.includes('nkwobi')) return 45000;
+  if (d.includes('efo') || d.includes('egusi') || d.includes('ogbono') || d.includes('soup')) return 45000;
+  if (d.includes('pasta') || d.includes('spaghetti')) return 40000;
+  if (d.includes('ukodo')) return 40000;
+  return 45000;
 };
 
 const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalCost: number } => {
@@ -164,13 +168,6 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
 
     const liters = dishNode.liters ? Number(dishNode.liters) : (dishNode.quantity ? Number(dishNode.quantity) : (dishNode.qty ? Number(dishNode.qty) : 1));
     let baseDishSubtotal = finalDishPrice * (liters > 0 ? liters : 1);
-    
-    const globalServiceMode = String(booking.kitchenServiceMode || booking.serviceMode || '').toLowerCase();
-    const localServiceMode = String(dishNode.serviceMode || dishNode.prepMode || globalServiceMode).toLowerCase();
-    const isInHouse = localServiceMode.includes('house') || localServiceMode.includes('chef') || localServiceMode.includes('cooking');
-    if (isInHouse) {
-      baseDishSubtotal += 20000;
-    }
 
     let proteinSubtotal = 0;
     const proteinLines: string[] = [];
@@ -216,13 +213,21 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
       }
     }
 
+    let swallowText = '';
+    if (dishNode.swallow) {
+      const swallowName = typeof dishNode.swallow === 'string' ? dishNode.swallow : (dishNode.swallow.name || '');
+      if (swallowName && !['false', 'no', 'none', ''].includes(swallowName.toLowerCase())) {
+        swallowText = `    🥣 Swallow: ${swallowName.toUpperCase()} (Free Accompaniment)`;
+      }
+    }
+
     const currentDishSubtotal = baseDishSubtotal + proteinSubtotal;
-    const dishLabel = `${dishName.toLowerCase()} - ₦${baseDishSubtotal.toLocaleString()}${isInHouse ? ' (IN-HOUSE CHEF +₦20k)' : ''}`;
+    const dishLabel = `${dishName.toUpperCase()} (${liters}L) - ₦${baseDishSubtotal.toLocaleString()}`;
     const mealTotalLine = `    ↳ meal total: ₦${currentDishSubtotal.toLocaleString()}`;
 
     return { 
       subtotal: currentDishSubtotal, 
-      labelLines: [dishLabel, ...proteinLines, mealTotalLine] 
+      labelLines: [dishLabel, ...proteinLines, ...(swallowText ? [swallowText] : []), mealTotalLine] 
     };
   };
 
@@ -249,7 +254,7 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
           if (['serviceMode', 'prepMode', 'totalPrice'].includes(subKey)) return;
           const parsedSub = parseJson(subVal);
 
-          const isDish = parsedSub && typeof parsedSub === 'object' && (parsedSub.foodName || parsedSub.mealName || parsedSub.name || parsedSub.title || parsedSub.item || parsedSub.price !== undefined || parsedSub.unitPrice !== undefined || parsedSub.proteins || parsedSub.proteinAddons);
+          const isDish = parsedSub && typeof parsedSub === 'object' && (parsedSub.foodName || parsedSub.mealName || parsedSub.name || parsedSub.title || parsedSub.item || parsedSub.price !== undefined || parsedSub.unitPrice !== undefined || parsedSub.proteins || parsedSub.proteinAddons || parsedSub.liters !== undefined || parsedSub.swallow !== undefined);
 
           if (isDish) {
             const res = processDishNode(parsedSub, subKey);
@@ -300,151 +305,112 @@ const CONCIERGE_CATALOGUE: Record<DepartmentKey, { baseRate: number; calculate: 
   kitchen: {
     baseRate: 0,
     calculate: (booking: Booking) => {
-      const { totalCost, names } = parseKitchenDetailsAndCost(booking);
-      return { cost: totalCost, lines: names };
+      const { totalCost } = parseKitchenDetailsAndCost(booking);
+      return { 
+        cost: totalCost, 
+        lines: totalCost > 0 ? [`Kitchen & Dining Service Total - ₦${totalCost.toLocaleString()}`] : [] 
+      };
     }
   },
   housekeeping: {
     baseRate: 25000,
     calculate: (booking: Booking, addons: any, nights: number) => {
       const hkObj = addons?.housekeeping || addons?.housekeepingService || booking?.housekeeping;
-      const activeFlag = booking.housekeepingActive ?? addons?.housekeepingActive ?? hkObj?.active ?? hkObj?.enabled;
       
-      if (activeFlag === false || activeFlag === 'false' || activeFlag === 'no' || (!hkObj && activeFlag === undefined && booking.housekeepingActive === undefined)) {
+      if (hkObj === 'no' || hkObj === false || hkObj === 'false') {
         return { cost: 0, lines: [] };
       }
 
       const explicit = extractNumber(typeof hkObj === 'object' ? (hkObj.total || hkObj.price || hkObj.amount) : hkObj);
+      const isDaily = typeof hkObj === 'string' && hkObj.toLowerCase() === 'yes';
+      const scheduleType = booking.housekeepingSchedule || addons?.housekeepingSchedule || (isDaily ? 'daily' : 'standard');
+      
       const cost = explicit > 0 ? explicit : 25000 * nights;
-      return { cost, lines: [`Housekeeping Service (${nights} Night(s)) - ₦${cost.toLocaleString()}`] };
+      return { cost, lines: [`Housekeeping Service (${scheduleType} schedule, ${nights} Night(s)) - ₦${cost.toLocaleString()}`] };
     }
   },
   chauffeur: {
     baseRate: 25000,
     calculate: (booking: Booking, addons: any, nights: number) => {
-      const cObj = addons?.chauffeur || addons?.chauffeurService || addons?.chauffeur_service || booking?.chauffeur;
-      const activeFlag = booking.chauffeurActive ?? addons?.chauffeurActive ?? cObj?.active ?? cObj?.enabled;
+      const cObj = addons?.chauffeur || addons?.chauffeurService || booking?.chauffeur;
+      if (!cObj || cObj === 'no' || cObj === false) return { cost: 0, lines: [] };
 
-      if (activeFlag === false || activeFlag === 'false' || activeFlag === 'no' || (!cObj && activeFlag === undefined)) {
-        return { cost: 0, lines: [] };
-      }
-
-      const vehicleType = String(typeof cObj === 'object' ? (cObj.car || cObj.vehicle || cObj.type || '') : (cObj || booking.chauffeurType || '')).toLowerCase();
-      
-      let rate = 25000;
-      if (vehicleType.includes('commuter') || vehicleType.includes('executive_commuter')) rate = 150000;
-      else if (vehicleType.includes('luxury') || vehicleType.includes('luxury_sedan')) rate = 350000;
-
-      const explicitRate = extractNumber(typeof cObj === 'object' ? (cObj.baseRate || cObj.price || cObj.amount || cObj.total) : 0);
-      const rateToUse = explicitRate > 0 ? explicitRate : rate;
-      const cost = rateToUse * nights;
-      const cleanName = vehicleType ? vehicleType.replace(/_/g, ' ').toUpperCase() : 'EXECUTIVE SEDAN';
-      return { cost, lines: [`Chauffeur: ${cleanName} (${nights} Day(s)) - ₦${cost.toLocaleString()}`] };
+      const cStr = typeof cObj === 'string' ? cObj : (cObj.car || cObj.vehicle || cObj.type || '');
+      const isLuxury = cStr.toLowerCase().includes('luxury');
+      const rate = isLuxury ? 350000 : 25000;
+      const cost = rate * nights;
+      return { cost, lines: [`Chauffeur: ${cStr.toUpperCase()} (${nights} Day(s)) - ₦${cost.toLocaleString()}`] };
     }
   },
   airport: {
     baseRate: 45000,
     calculate: (booking: Booking, addons: any) => {
-      const aObj = addons?.airport || addons?.airportTransfer || addons?.airport_transfer || booking?.airport;
-      const activeFlag = booking.airportActive ?? addons?.airportActive ?? (typeof aObj === 'object' ? aObj?.active : undefined);
+      const aObj = addons?.airport || addons?.airportTransfer || booking?.airport;
+      if (!aObj || aObj === 'no' || aObj === false) return { cost: 0, lines: [] };
 
-      if (activeFlag === false || activeFlag === 'false' || activeFlag === 'no' || (!aObj && activeFlag === undefined && !booking.airportTransferType && !booking.airportDirection)) {
-        return { cost: 0, lines: [] };
-      }
-
-      const transferStr = typeof aObj === 'string' ? aObj : (typeof aObj === 'object' ? (aObj.name || aObj.title || '') : '');
-      const explicitPrice = extractNumber(typeof aObj === 'object' ? (aObj.baseRate || aObj.price || aObj.amount || aObj.total) : aObj);
+      const aStr = typeof aObj === 'string' ? aObj : (aObj.name || aObj.title || '');
+      const isRound = aStr.toLowerCase().includes('round') || addons?.airportDirection === 'round_trip' || booking?.airportDirection === 'round_trip';
+      const isLuxury = aStr.toLowerCase().includes('luxury');
       
-      let baseCost = explicitPrice > 0 ? explicitPrice : (transferStr.toLowerCase().includes('luxury') ? 85000 : 45000);
+      const basePrice = isLuxury ? 85000 : 45000;
+      const cost = isRound ? basePrice * 2 : basePrice;
 
-      const tripTypeStr = `${transferStr} ${booking.airportTripDirection || booking.airportTripType || booking.tripType || booking.airportDirection || ''}`.toLowerCase();
-      const isRoundTrip = tripTypeStr.includes('round') || tripTypeStr.includes('return') || tripTypeStr.includes('both') || tripTypeStr.includes('two_way') || tripTypeStr.includes('2x');
-
-      const multiplier = isRoundTrip ? 2 : 1;
-      const cost = baseCost * multiplier;
-
-      const label = transferStr ? transferStr : `Airport Transfer${isRoundTrip ? ' (Round Trip)' : ''} - ₦${cost.toLocaleString()}`;
-      return { cost, lines: [label] };
+      return { cost, lines: [`Airport Transfer: ${aStr} - ₦${cost.toLocaleString()}`] };
     }
   },
   security: {
     baseRate: 80000,
     calculate: (booking: Booking, addons: any, nights: number) => {
       const sObj = addons?.security || addons?.securityService || booking?.security;
-      const activeFlag = booking.securityActive ?? addons?.securityActive ?? sObj?.active ?? sObj?.enabled;
+      if (!sObj || sObj === 'no' || sObj === 'false') return { cost: 0, lines: [] };
 
-      if (activeFlag === false || activeFlag === 'false' || activeFlag === 'no' || (!sObj && activeFlag === undefined)) {
-        return { cost: 0, lines: [] };
-      }
-
-      const secType = String(booking.securityType || (typeof sObj === 'object' ? (sObj.type || sObj.category || '') : (sObj || 'tactical'))).toLowerCase();
-      
-      let rate = 80000;
-      if (secType.includes('executive')) rate = 120000;
-      else if (secType.includes('bouncer')) rate = 200000;
-
-      const explicit = extractNumber(typeof sObj === 'object' ? (sObj.baseRate || sObj.price || sObj.amount || sObj.total) : 0);
-      const rateToUse = explicit > 0 ? explicit : rate;
-      const count = Number(booking.securityCount || addons?.securityCount || (typeof sObj === 'object' ? (sObj.count || 1) : 1));
-      const cost = rateToUse * count * nights;
-      return { cost, lines: [`Security: ${secType.toUpperCase()} (${count} Guard(s) × ${nights} Days) - ₦${cost.toLocaleString()}`] };
+      const sStr = typeof sObj === 'string' ? sObj : (sObj.type || sObj.name || '');
+      const isExecutive = sStr.toLowerCase().includes('executive') || sStr.toLowerCase().includes('tactical');
+      const rate = isExecutive ? 120000 : 80000;
+      const cost = rate * nights;
+      return { cost, lines: [`Security Detail: ${sStr} (${nights} Nights) - ₦${cost.toLocaleString()}`] };
     }
   },
   laundry: {
     baseRate: 15000,
     calculate: (booking: Booking, addons: any) => {
-      const lObj = addons?.laundry || addons?.drycleaning || booking?.laundry;
-      const activeFlag = booking.laundryActive ?? addons?.laundryActive ?? lObj?.active ?? lObj?.enabled;
+      const lObj = addons?.laundry || booking?.laundry;
+      if (!lObj || typeof lObj !== 'object') return { cost: 0, lines: [] };
 
-      const adult = Number(booking.laundryAdult || addons?.laundryAdult || (typeof lObj === 'object' ? lObj.adult : 0) || 0);
-      const kid = Number(booking.laundryKid || addons?.laundryKid || (typeof lObj === 'object' ? lObj.kid : 0) || 0);
-      const suit = Number(booking.laundrySuit || addons?.laundrySuit || (typeof lObj === 'object' ? lObj.suit : 0) || 0);
+      const adult = Number(lObj.adult || 0);
+      const kid = Number(lObj.kid || 0);
+      const suit = Number(lObj.suit || 0);
       
-      if ((activeFlag === false || activeFlag === 'false' || activeFlag === 'no') && adult === 0 && kid === 0 && suit === 0 && !lObj) {
-        return { cost: 0, lines: [] };
-      }
-
-      const calc = (adult * 1500) + (kid * 1000) + (suit * 3000);
-      const explicit = extractNumber(typeof lObj === 'object' ? (lObj.total || lObj.price || lObj.amount) : lObj);
-      const cost = explicit > 0 ? explicit : (calc > 0 ? calc : 0);
-
+      const cost = (adult * 1500) + (kid * 1000) + (suit * 3000);
       const lines = [];
-      if (adult > 0) lines.push(`  + Adult Pcs: ${adult} (₦${(adult * 1500).toLocaleString()})`);
-      if (kid > 0) lines.push(`  + Kid Pcs: ${kid} (₦${(kid * 1000).toLocaleString()})`);
-      if (suit > 0) lines.push(`  + Suit Pcs: ${suit} (₦${(suit * 3000).toLocaleString()})`);
-      if (lines.length === 0 && cost > 0) lines.push(`Laundry Service - ₦${cost.toLocaleString()}`);
+      if (adult > 0) lines.push(`  + Adult Laundry: ${adult} pcs (₦${(adult * 1500).toLocaleString()})`);
+      if (kid > 0) lines.push(`  + Kid Laundry: ${kid} pcs (₦${(kid * 1000).toLocaleString()})`);
+      if (suit > 0) lines.push(`  + Suit Drycleaning: ${suit} pcs (₦${(suit * 3000).toLocaleString()})`);
+      
       return { cost, lines };
     }
   },
   beddings: {
     baseRate: 13000,
     calculate: (booking: Booking, addons: any, nights: number) => {
-      const bObj = addons?.beddings || addons?.linen || booking?.beddings;
-      
-      const bBedding = booking.beddingBeddings ?? addons?.beddingBeddings ?? (typeof bObj === 'object' ? bObj?.beddings : undefined);
-      const bTowels = booking.beddingTowels ?? addons?.beddingTowels ?? (typeof bObj === 'object' ? bObj?.towels : undefined);
+      const bObj = addons?.beddings || booking?.beddings;
+      if (!bObj || typeof bObj !== 'object') return { cost: 0, lines: [] };
 
-      const isBeddingActive = bBedding && !['no', 'false', 'none', ''].includes(String(bBedding).toLowerCase());
-      const isTowelsActive = bTowels && !['no', 'false', 'none', ''].includes(String(bTowels).toLowerCase());
-
-      if (!isBeddingActive && !isTowelsActive && !bObj) {
-        return { cost: 0, lines: [] };
-      }
+      const hasBedding = bObj.beddings === 'yes';
+      const hasTowels = bObj.towels === 'yes';
+      const selection = bObj.selection || 'Standard';
 
       let cost = 0;
       const lines = [];
-
-      if (isBeddingActive || bObj) {
-        const bedRate = extractNumber(bObj?.beddingRate || booking?.beddingRate || 10000);
-        const bedSubtotal = bedRate * nights;
-        cost += bedSubtotal;
-        lines.push(`Beddings Package (₦${bedRate.toLocaleString()} × ${nights} nights) - ₦${bedSubtotal.toLocaleString()}`);
+      if (hasBedding) {
+        const sub = 10000 * nights;
+        cost += sub;
+        lines.push(`${selection} Beddings Package (${nights} Nights) - ₦${sub.toLocaleString()}`);
       }
-      if (isTowelsActive) {
-        const towelRate = extractNumber(bObj?.towelRate || booking?.towelRate || 3000);
-        const towelSubtotal = towelRate * nights;
-        cost += towelSubtotal;
-        lines.push(`Towels Package (₦${towelRate.toLocaleString()} × ${nights} nights) - ₦${towelSubtotal.toLocaleString()}`);
+      if (hasTowels) {
+        const sub = 3000 * nights;
+        cost += sub;
+        lines.push(`Towels Package (${nights} Nights) - ₦${sub.toLocaleString()}`);
       }
       return { cost, lines };
     }
@@ -452,17 +418,11 @@ const CONCIERGE_CATALOGUE: Record<DepartmentKey, { baseRate: number; calculate: 
   shopper: {
     baseRate: 15000,
     calculate: (booking: Booking, addons: any, nights: number) => {
-      const sObj = addons?.shopper || booking?.shopper;
-      const activeFlag = booking.shopperActive ?? addons?.shopperActive ?? sObj?.active;
+      const count = Number(addons?.shoppersCount || booking?.shoppersCount || 0);
+      if (count <= 0) return { cost: 0, lines: [] };
 
-      if (activeFlag === false || activeFlag === 'false' || activeFlag === 'no' || (!sObj && activeFlag === undefined && !booking.shoppersCount)) {
-        return { cost: 0, lines: [] };
-      }
-
-      const count = Number(booking.shoppersCount || addons?.shoppersCount || (typeof sObj === 'object' ? sObj.count : 1) || 1);
-      const explicit = extractNumber(addons?.shopperTotal || booking?.shopperTotal || (typeof sObj === 'object' ? sObj.total : 0));
-      const cost = explicit > 0 ? explicit : 15000 * count * nights;
-      return { cost, lines: [`Personal Shopper (${count} Shopper(s) × ${nights} Days) - ₦${cost.toLocaleString()}`] };
+      const cost = 15000 * count * nights;
+      return { cost, lines: [`Personal Shopper Assignment (${count} Shopper(s) × ${nights} Days) - ₦${cost.toLocaleString()}`] };
     }
   }
 };
@@ -795,83 +755,6 @@ function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQue
               <div className="w-full bg-gray-800 rounded-full h-1.5"><div className={`h-1.5 rounded-full ${dept.barBg}`} style={{ width: `${totalRevenue > 0 ? (dept.revenue / totalRevenue) * 100 : 0}%` }}></div></div>
             </div>
           ))}
-        </div>
-      </div>
-
-      <div className="p-6 rounded-xl bg-gray-950 border border-gray-800 space-y-4">
-        <h3 className="text-sm font-bold uppercase tracking-wider text-cyan-400 border-b border-gray-800 pb-3">Recent Booking Add-ons & Service Breakdown</h3>
-        <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
-          {filteredBookings.length === 0 ? (
-            <div className="text-xs text-gray-500 italic text-center py-4">No bookings found for this view.</div>
-          ) : (
-            filteredBookings.map((b: Booking, idx: number) => {
-              const bookingKey = b.id || b.reference || `overview-booking-${idx}`;
-              const addons = parseJson(b?.addons);
-              const nights = Math.max(1, Number(b?.totalNights) || 1);
-              const activeDepts = DEPARTMENT_CONFIGS.filter(c => isBookingActiveForDepartment(b, c.id));
-              const aptRev = getBookingApartmentRevenue(b);
-              const refNo = b?.paymentReference || b?.reference || b?.id || 'N/A';
-              const grandTotal = aptRev + DEPARTMENT_CONFIGS.reduce((sum, c) => sum + calculateSingleBookingDeptRevenue(b, c), 0);
-
-              return (
-                <div key={bookingKey} className="p-4 rounded-lg bg-gray-900 border border-gray-800 space-y-3">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs gap-2 border-b border-gray-800 pb-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-white text-sm">{b?.customerName || b?.guestName || 'Guest'}</span>
-                        <span className="px-2 py-0.5 rounded bg-gray-800 text-cyan-300 font-mono text-[10px] border border-gray-700">Ref: {refNo}</span>
-                      </div>
-                      <div className="text-gray-400 mt-0.5">
-                        <span className="text-cyan-400 font-mono">{b?.listingId || 'Suite'}</span> | 📞 {b?.phone || b?.phoneNumber || 'N/A'} | Stay: {b?.checkIn ? new Date(b.checkIn).toLocaleDateString() : 'N/A'} ({nights} Night(s))
-                      </div>
-                    </div>
-                    <span className="text-amber-400 font-mono font-bold text-xs">Total: ₦{grandTotal.toLocaleString()}</span>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 text-[11px]">
-                    <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono">
-                      Apartment: ₦{aptRev.toLocaleString()}
-                    </span>
-                    {activeDepts.map(dept => {
-                      const deptRev = calculateSingleBookingDeptRevenue(b, dept);
-                      return (
-                        <span key={`ov-dept-${dept.id}`} className={`px-2 py-0.5 rounded bg-gray-800 ${dept.color} border border-gray-700 font-mono`}>
-                          {dept.name}: ₦{deptRev.toLocaleString()}
-                        </span>
-                      );
-                    })}
-                    {activeDepts.length === 0 && <span className="text-gray-500 italic">No extra add-ons selected</span>}
-                  </div>
-
-                  {activeDepts.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-gray-800 space-y-3">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 block">Detailed Service & Add-on Breakdown:</span>
-                      {activeDepts.map(dept => {
-                        const catalogEntry = CONCIERGE_CATALOGUE[dept.id];
-                        if (!catalogEntry) return null;
-                        const { lines, cost } = catalogEntry.calculate(b, addons, nights);
-                        if (lines.length === 0 && cost === 0) return null;
-
-                        return (
-                          <div key={`breakdown-${dept.id}`} className="space-y-1 pl-2 border-l-2 border-cyan-500/40">
-                            <div className="flex justify-between items-center text-[11px]">
-                              <span className={`font-bold ${dept.color}`}>{dept.name}</span>
-                              <span className="font-mono text-cyan-300 font-semibold">₦{cost.toLocaleString()}</span>
-                            </div>
-                            {lines.map((line, lIdx) => (
-                              <div key={`line-${dept.id}-${lIdx}`} className="text-[11px] font-mono text-gray-300">
-                                {line}
-                              </div>
-                            ))}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
         </div>
       </div>
 

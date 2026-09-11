@@ -17,6 +17,8 @@ interface ProcessedDish {
   swallow?: string;
   swallowPrice?: number;
   price?: number;
+  subItems?: { name: string; qty: number; price?: number; note?: string }[];
+  unit?: string;
 }
 
 interface BookingItem {
@@ -31,6 +33,7 @@ interface BookingItem {
   phoneNumber?: string;
   customerPhone?: string;
   guestCount?: number;
+  totalNights?: number;
   guestInfo?: {
     fullName?: string;
     email?: string;
@@ -157,31 +160,152 @@ const parseProteinsWithQty = (rawProteins: any): ProteinItem[] => {
   }));
 };
 
-const extractKitchenTotalCost = (booking: BookingItem, dishesList: ProcessedDish[]): number => {
-  const explicitTotal =
-    booking.kitchenTotal ||
-    booking.mealTotal ||
-    booking.mealsPrice ||
-    booking.foodTotal ||
-    booking.dailyMealSelections?.totalPrice ||
-    booking.dailyMealSelections?.totalCost ||
-    booking.addons?.mealTotal ||
-    booking.addons?.kitchenTotal;
+// Parser to convert Supabase JSON service add-ons into detailed structured items matching your exact layout
+const parseAddonsIntoStructuredItems = (addons: any, nights: number = 1): ProcessedDish[] => {
+  const parsed = safeParseJson(addons);
+  if (!parsed || typeof parsed !== 'object') return [];
 
-  if (explicitTotal && !isNaN(Number(explicitTotal)) && Number(explicitTotal) > 0) {
-    return Number(explicitTotal);
+  const items: ProcessedDish[] = [];
+  const stayDurationNote = `(${nights}night${nights > 1 ? 's' : ''}/${nights}day${nights > 1 ? 's' : ''})`;
+
+  // 1. Airport Transfer
+  if (parsed.airport) {
+    const isRound = String(parsed.airport).toLowerCase().includes('round') || parsed.airportDirection === 'round_trip';
+    const isLuxury = String(parsed.airport).toLowerCase().includes('luxury');
+    const basePrice = isLuxury ? 85000 : 45000;
+    const price = isRound ? basePrice * 2 : basePrice;
+    const tripTypeNote = isRound ? 'Round Trip (2x Fare)' : 'One Way';
+    
+    items.push({
+      slot: 'Airport',
+      category: 'Airport Transfer',
+      name: isLuxury ? 'LUXURY SUV AIRPORT TRANSFER' : 'STANDARD AIRPORT TRANSFER',
+      liters: isRound ? 2 : 1,
+      unit: tripTypeNote,
+      price,
+      subItems: [{ name: `${String(parsed.airport)} - ${tripTypeNote}`, qty: 1, price, note: stayDurationNote }]
+    });
   }
 
-  let calculatedSum = 0;
-  dishesList.forEach((dish) => {
-    if (dish.price) calculatedSum += Number(dish.price);
-    if (dish.swallowPrice) calculatedSum += Number(dish.swallowPrice);
-    dish.proteins?.forEach((p) => {
-      if (p.price) calculatedSum += Number(p.price);
-    });
-  });
+  // 2. Laundry
+  if (parsed.laundry && typeof parsed.laundry === 'object') {
+    const adult = Number(parsed.laundry.adult || 0);
+    const kid = Number(parsed.laundry.kid || 0);
+    const suit = Number(parsed.laundry.suit || 0);
+    const totalLaundryPrice = (adult * 1500) + (kid * 1000) + (suit * 3000);
 
-  return calculatedSum;
+    const sub = [];
+    if (adult > 0) sub.push({ name: 'Adult Laundry Pcs', qty: adult, price: adult * 1500, note: stayDurationNote });
+    if (kid > 0) sub.push({ name: 'Kid Laundry Pcs', qty: kid, price: kid * 1000, note: stayDurationNote });
+    if (suit > 0) sub.push({ name: 'Suit Drycleaning Pcs', qty: suit, price: suit * 3000, note: stayDurationNote });
+
+    if (totalLaundryPrice > 0) {
+      items.push({
+        slot: 'Laundry',
+        category: 'Laundry & Drycleaning',
+        name: 'DRYCLEANING & LAUNDRY ORDER',
+        liters: adult + kid + suit,
+        unit: 'Pieces',
+        price: totalLaundryPrice,
+        subItems: sub
+      });
+    }
+  }
+
+  // 3. Beddings & Linen
+  if (parsed.beddings && typeof parsed.beddings === 'object') {
+    const hasBedding = parsed.beddings.beddings === 'yes';
+    const hasTowels = parsed.beddings.towels === 'yes';
+    const selection = parsed.beddings.selection || 'Standard';
+    
+    let beddingsPrice = hasBedding ? 10000 * nights : 0;
+    let towelsPrice = hasTowels ? 3000 * nights : 0;
+    let totalBeddingPrice = beddingsPrice + towelsPrice;
+
+    const sub = [];
+    if (hasBedding) sub.push({ name: `${selection} Bedding Package`, qty: nights, price: beddingsPrice, note: stayDurationNote });
+    if (hasTowels) sub.push({ name: 'Towels Package', qty: nights, price: towelsPrice, note: stayDurationNote });
+
+    if (totalBeddingPrice > 0) {
+      items.push({
+        slot: 'Beddings',
+        category: 'Beddings & Linen',
+        name: `LINEN SERVICE (${selection.toUpperCase()})`,
+        liters: nights,
+        unit: 'Nights',
+        price: totalBeddingPrice,
+        subItems: sub
+      });
+    }
+  }
+
+  // 4. Security Detail
+  if (parsed.security) {
+    const secStr = String(parsed.security);
+    const isExecutive = secStr.toLowerCase().includes('executive') || secStr.toLowerCase().includes('tactical');
+    const rate = isExecutive ? 120000 : 80000;
+    const price = rate * nights;
+
+    items.push({
+      slot: 'Security',
+      category: 'Security Detail',
+      name: secStr.toUpperCase(),
+      liters: nights,
+      unit: 'Nights',
+      price,
+      subItems: [{ name: 'Tactical Personnel Assignment', qty: 1, price, note: stayDurationNote }]
+    });
+  }
+
+  // 5. Chauffeur Service
+  if (parsed.chauffeur) {
+    const chaufStr = String(parsed.chauffeur);
+    const isLuxury = chaufStr.toLowerCase().includes('luxury');
+    const rate = isLuxury ? 350000 : 25000;
+    const price = rate * nights;
+
+    items.push({
+      slot: 'Chauffeur',
+      category: 'Chauffeur Service',
+      name: chaufStr.toUpperCase(),
+      liters: nights,
+      unit: 'Days',
+      price,
+      subItems: [{ name: 'Chauffeur & Vehicle Allocation', qty: nights, price, note: stayDurationNote }]
+    });
+  }
+
+  // 6. Housekeeping
+  if (parsed.housekeeping === 'yes' || parsed.housekeepingSchedule) {
+    const price = 25000 * nights;
+    const scheduleType = parsed.housekeepingSchedule || 'daily';
+    items.push({
+      slot: 'Housekeeping',
+      category: 'Housekeeping',
+      name: `HOUSEKEEPING SERVICE (${scheduleType.toUpperCase()} SCHEDULE)`,
+      liters: nights,
+      unit: 'Nights',
+      price,
+      subItems: [{ name: 'Full Unit Cleaning & Maintenance', qty: nights, price, note: stayDurationNote }]
+    });
+  }
+
+  // 7. Personal Shopper
+  if (parsed.shoppersCount && Number(parsed.shoppersCount) > 0) {
+    const count = Number(parsed.shoppersCount);
+    const price = 15000 * count * nights;
+    items.push({
+      slot: 'Shopper',
+      category: 'Personal Shopper',
+      name: 'PERSONAL SHOPPER ASSIGNMENT',
+      liters: count,
+      unit: 'Shopper(s)',
+      price,
+      subItems: [{ name: 'Errand & Procurement Service', qty: count, price, note: stayDurationNote }]
+    });
+  }
+
+  return items;
 };
 
 export default function KitchenSchedule({ bookings, showAddons = true }: KitchenScheduleProps) {
@@ -190,8 +314,9 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
       const rawAddons = safeParseJson(booking.addons);
       const dailySelections = safeParseJson(booking.dailyMealSelections);
       const hasMeals = dailySelections.meals || dailySelections.soups || booking.meals || rawAddons?.meals || booking.soups || rawAddons?.soups || rawAddons?.kitchen;
+      const hasServiceAddons = rawAddons && Object.keys(rawAddons).length > 0;
       const kitchenCost = Number(booking.kitchenTotal || booking.mealTotal || booking.foodTotal || 0);
-      return hasMeals || kitchenCost > 0;
+      return hasMeals || hasServiceAddons || kitchenCost > 0;
     });
   }, [bookings]);
 
@@ -204,6 +329,7 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
       {activeKitchenBookings.map((booking, bIdx) => {
         const rawAddons = safeParseJson(booking.addons);
         const dailySelections = safeParseJson(booking.dailyMealSelections);
+        const nights = Math.max(1, Number(booking.totalNights) || 1);
         
         const mealsObj = safeParseJson(
           dailySelections.meals || 
@@ -240,7 +366,7 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
               if (['totalPrice', 'serviceMode', 'prepMode'].includes(subKey)) return;
               const parsedSub = safeParseJson(subVal);
 
-              const isDish = parsedSub && typeof parsedSub === 'object' && (parsedSub.foodName || parsedSub.mealName || parsedSub.name || parsedSub.title || parsedSub.item || parsedSub.price !== undefined || parsedSub.unitPrice !== undefined || parsedSub.proteins || parsedSub.proteinAddons);
+              const isDish = parsedSub && typeof parsedSub === 'object' && (parsedSub.foodName || parsedSub.mealName || parsedSub.name || parsedSub.title || parsedSub.item || parsedSub.price !== undefined || parsedSub.unitPrice !== undefined || parsedSub.proteins || parsedSub.proteinAddons || parsedSub.liters !== undefined);
 
               if (isDish) {
                 const dishKey = subKey;
@@ -257,11 +383,10 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                 );
 
                 let swallowName: string | undefined = undefined;
-                let swallowCost: number | undefined = undefined;
+                let swallowCost = 0; 
                 if (innerParsed.swallow) {
                   const swallowObj = safeParseJson(innerParsed.swallow);
                   swallowName = formatItemName(typeof innerParsed.swallow === 'string' ? innerParsed.swallow : swallowObj.name);
-                  swallowCost = Number(swallowObj.price || 3000);
                 }
 
                 const dishObj: ProcessedDish = {
@@ -294,11 +419,10 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                   );
 
                   let swallowName: string | undefined = undefined;
-                  let swallowCost: number | undefined = undefined;
+                  let swallowCost = 0;
                   if (innerParsed.swallow) {
                     const swallowObj = safeParseJson(innerParsed.swallow);
                     swallowName = formatItemName(typeof innerParsed.swallow === 'string' ? innerParsed.swallow : swallowObj.name);
-                    swallowCost = Number(swallowObj.price || 3000);
                   }
 
                   const dishObj: ProcessedDish = {
@@ -323,21 +447,17 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
         processSourceObj(mealsObj, 'Meals');
         processSourceObj(soupsObj, 'Soups');
 
-        const explicitTotal = Number(booking.kitchenTotal || booking.mealTotal || booking.foodTotal || 0);
-        if (allParsedDishes.length === 0 && explicitTotal > 0) {
-          const fallbackDish: ProcessedDish = {
-            slot: 'Package',
-            category: 'Package',
-            name: 'Kitchen Service Package / Order',
-            liters: 1,
-            price: explicitTotal,
-          };
-          groupedMeals['KITCHEN ORDER DETAILS'] = [fallbackDish];
-          allParsedDishes.push(fallbackDish);
+        // Render Service Add-ons uniformly into the schedule with rich detailed specs
+        if (showAddons && rawAddons) {
+          const structuredAddons = parseAddonsIntoStructuredItems(rawAddons, nights);
+          if (structuredAddons.length > 0) {
+            groupedMeals['CONCIERGE & SERVICE ADD-ONS'] = structuredAddons;
+            structuredAddons.forEach(addon => allParsedDishes.push(addon));
+          }
         }
 
         const normalizedMealEntries = Object.entries(groupedMeals).filter(([, dishes]) => dishes.length > 0);
-        const totalKitchenCost = extractKitchenTotalCost(booking, allParsedDishes);
+        const totalKitchenCost = allParsedDishes.reduce((sum, d) => sum + (d.price || 0) + (d.swallowPrice || 0) + (d.proteins?.reduce((pSum, p) => pSum + (p.price || 0), 0) || 0), 0);
         const cardKey = booking.id || `kschedule-${bIdx}`;
 
         return (
@@ -359,7 +479,7 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                 </span>
                 {totalKitchenCost > 0 && (
                   <span className="px-3 py-1 text-xs font-bold rounded-full bg-amber-950/90 text-amber-300 border border-amber-700 font-mono">
-                    💰 Food Order Total: ₦{totalKitchenCost.toLocaleString()}
+                    💰 Order & Add-ons Total: ₦{totalKitchenCost.toLocaleString()}
                   </span>
                 )}
               </div>
@@ -367,7 +487,7 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
 
             <div>
               <h4 className="text-xs font-bold text-cyan-400 tracking-wider uppercase mb-3">
-                Daily Meal Selections, Soups & Protein Add-ons
+                Daily Meal Selections, Soups & Service Add-ons Schedule
               </h4>
               <div className="space-y-3">
                 {normalizedMealEntries.map(([dayLabel, dishes], dayIdx) => (
@@ -381,9 +501,9 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                             <div className="flex items-center justify-between text-gray-200 font-semibold">
                               <span>{dish.name}</span>
                               <div className="flex items-center gap-2">
-                                {dish.liters && dish.liters > 1 && (
-                                  <span className="text-xs font-mono text-amber-300 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-800">
-                                    {dish.liters} {dish.liters === 1 ? 'Liter' : 'Liters'}
+                                {dish.liters && dish.liters > 0 && (
+                                  <span className="text-xs font-mono text-cyan-300 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800">
+                                    {dish.liters} {dish.unit || (dish.liters === 1 ? 'Unit' : 'Units')}
                                   </span>
                                 )}
                                 {dish.price && dish.price > 0 && (
@@ -396,10 +516,22 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
 
                             {dish.swallow && (
                               <div className="flex justify-between items-center pl-3 border-l-2 border-cyan-500/60 text-[11px] text-cyan-300 font-medium mt-1">
-                                <span>🥣 Swallow: {dish.swallow}</span>
-                                {dish.swallowPrice && dish.swallowPrice > 0 && (
-                                  <span className="font-mono text-emerald-400">₦{dish.swallowPrice.toLocaleString()}</span>
-                                )}
+                                <span>🥣 Swallow: {dish.swallow} (Free Accompaniment)</span>
+                                <span className="font-mono text-emerald-400">₦0</span>
+                              </div>
+                            )}
+
+                            {dish.subItems && dish.subItems.length > 0 && (
+                              <div className="pl-3 border-l-2 border-amber-500/60 text-[11px] text-amber-200 space-y-1 mt-2">
+                                <span className="text-gray-400 font-medium">Service Specifications:</span>
+                                <div className="flex flex-col gap-1 mt-1">
+                                  {dish.subItems.map((sub, sIdx) => (
+                                    <span key={`sub-${sIdx}`} className="bg-amber-950/40 text-amber-300 border border-amber-800/60 px-2.5 py-1 rounded text-[11px] font-mono flex justify-between items-center">
+                                      <span>+ {sub.name} <strong className="text-white">({sub.qty}x)</strong> {sub.note ? `- ${sub.note}` : ''}</span>
+                                      {sub.price && sub.price > 0 ? <strong className="text-emerald-400">₦{sub.price.toLocaleString()}</strong> : ''}
+                                    </span>
+                                  ))}
+                                </div>
                               </div>
                             )}
 
@@ -418,7 +550,7 @@ export default function KitchenSchedule({ bookings, showAddons = true }: Kitchen
                             )}
 
                             <div className="pt-2 mt-2 border-t border-gray-800/80 flex justify-between items-center text-[11px] font-mono">
-                              <span className="text-gray-400">Dish Subtotal:</span>
+                              <span className="text-gray-400">Item Subtotal:</span>
                               <span className="text-amber-300 font-bold">₦{dishLineTotal.toLocaleString()}</span>
                             </div>
                           </div>

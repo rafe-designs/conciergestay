@@ -41,11 +41,11 @@ const SERVICES: ServiceDetail[] = [
   },
   {
     id: 'private-chef',
-    title: 'Private Chef & Catering',
+    title: 'Exquisite Catering',
     tagline: 'Gourmet Culinary Experiences On-Demand',
     icon: <ChefHat className="w-6 h-6 text-yellow-400" />,
     heroImage: 'https://plus.unsplash.com/premium_photo-1764202468993-16aba84bcc3d?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxzZWFyY2h8MjR8fGJsYWNrJTIwY2hlZiUyMGNvb2tpbmd8ZW58MHx8MHx8fDA%3Dauto=format&fit=crop&q=80&w=1200',
-    description: 'Indulge in tailored culinary creations crafted directly in your suite kitchen by professional executive chefs. From daily meal prep to private multi-course dinner parties.',
+    description: 'Savor custom culinary creations crafted to perfection by our executive chefs. Whether it’s your daily meal prep or an intimate multi-course dinner party, we bring the restaurant experience to you.',
     features: [
       'Bespoke Daily Meal Plans & Dietary Customization',
       'Multi-Course Fine Dining Private Dinners',
@@ -73,7 +73,7 @@ const SERVICES: ServiceDetail[] = [
     tagline: 'Luxury SUV & Sedan Ground Mobility',
     icon: <Car className="w-6 h-6 text-yellow-400" />,
     heroImage: 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&q=80&w=1200',
-    description: 'Travel in ultimate comfort. Our fleet of pristine SUVs, armored vehicles, and luxury sedans comes with professional, vetted chauffeurs dedicated to your itinerary.',
+    description: 'Travel in ultimate comfort. Our fleet of pristine SUVs, executive vehicles, and luxury sedans comes with professional, vetted chauffeurs dedicated to your itinerary.',
     features: [
         'Airport Pickups & Drop-offs',
       'Pristine Fleet of Armored & Luxury SUVs',
