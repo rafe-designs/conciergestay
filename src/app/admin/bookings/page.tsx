@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import KitchenSchedule from './KitchenSchedule';
 
@@ -25,6 +25,7 @@ export interface Booking {
   phone?: string;
   phoneNumber?: string;
   guests?: number;
+  guestCount?: number;
   totalNights?: number;
   pricePerNight?: number;
   totalAmount?: number;
@@ -33,6 +34,7 @@ export interface Booking {
   mealTotal?: number;
   dailyMealSelections?: any;
   meals?: any;
+  soups?: any;
   addons?: any;
   user?: { name?: string; email?: string } | null;
   departmentalBreakdown?: any;
@@ -103,106 +105,197 @@ const getProteinUnitPrice = (proteinName: string): number => {
   return 5000;
 };
 
+const getDishUnitPrice = (dishName: string): number => {
+  const d = dishName.toLowerCase();
+  if (d.includes('jollof')) return 50000;
+  if (d.includes('asaro') || d.includes('yam')) return 45000;
+  if (d.includes('beans')) return 45000;
+  if (d.includes('egusi') || d.includes('soup')) return 35000;
+  if (d.includes('ukodo')) return 40000;
+  if (d.includes('fried rice')) return 50000;
+  if (d.includes('coconut rice')) return 50000;
+  return 35000;
+};
+
 const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalCost: number } => {
   const addons = parseJson(booking?.addons);
+  
   const mealsObj = parseJson(
     booking?.dailyMealSelections || 
     booking?.meals || 
     addons?.kitchen || 
     addons?.food || 
-    addons?.meals ||
-    addons?.kitchenSelections
+    addons?.kitchenSelections ||
+    booking?.kitchenSelections
   );
+  const soupsObj = parseJson(booking?.soups || addons?.soups);
 
-  const globalServiceMode = String(mealsObj?.serviceMode || mealsObj?.prepMode || '').toLowerCase();
   const explicitTotal = extractNumber(
     booking?.kitchenTotal || booking?.mealTotal || booking?.mealsPrice || booking?.foodTotal ||
-    mealsObj?.totalPrice || mealsObj?.grandTotal || mealsObj?.total || addons?.kitchenTotal
+    mealsObj?.totalPrice || mealsObj?.grandTotal || mealsObj?.total || addons?.kitchenTotal || addons?.foodTotal ||
+    booking?.kitchenRevenue || booking?.mealsRevenue
   );
 
   const itemNames: string[] = [];
   let calculatedCost = 0;
 
-  if (!mealsObj || typeof mealsObj !== 'object' || Object.keys(mealsObj).length === 0) {
-    return { names: [], totalCost: explicitTotal };
-  }
-
-  const processDishNode = (key: string, dishNode: any) => {
-    if (!dishNode || typeof dishNode !== 'object') return;
-    const rawName = dishNode.name || dishNode.title || key;
-    if (!rawName || ['serviceMode', 'prepMode', 'totalPrice'].includes(String(rawName))) return;
-
-    const dishName = String(rawName).replace(/^(rc_|sp_|pr_|sw_|p_|s_)/gi, '').replace(/_/g, ' ').trim();
-    const localServiceMode = String(dishNode.serviceMode || globalServiceMode).toLowerCase();
-    const isInHouse = localServiceMode.includes('house') || localServiceMode.includes('chef');
-
-    const liters = dishNode.liters ? Number(dishNode.liters) : undefined;
-    let baseDishPrice = extractNumber(dishNode.price || dishNode.amount || dishNode.cost || dishNode.totalPrice);
-
-    if (baseDishPrice === 0) {
-      baseDishPrice = dishName.toLowerCase().includes('jollof') ? (isInHouse ? 60000 : 40000) : (isInHouse ? 50000 : 35000);
+  const processDishNode = (dishNode: any, fallbackKey?: string): { subtotal: number; labelLines: string[] } => {
+    if (!dishNode) return { subtotal: 0, labelLines: [] };
+    
+    if (typeof dishNode === 'number') {
+      return { subtotal: dishNode, labelLines: [`Kitchen Package - ₦${dishNode.toLocaleString()}`] };
     }
+    
+    if (typeof dishNode !== 'object') {
+      const p = extractNumber(dishNode);
+      const name = String(fallbackKey || 'Meal Item').replace(/^(rc_|sp_|pr_|sw_|p_|s_)/gi, '').replace(/_/g, ' ').trim();
+      const price = p > 0 ? p : getDishUnitPrice(name);
+      return { subtotal: price, labelLines: [`${name.toUpperCase()} - ₦${price.toLocaleString()}`] };
+    }
+    
+    const rawName = dishNode.foodName || dishNode.mealName || dishNode.name || dishNode.title || dishNode.item || fallbackKey;
+    const baseDishPrice = extractNumber(dishNode.price ?? dishNode.unitPrice ?? dishNode.amount ?? dishNode.cost ?? dishNode.totalPrice ?? dishNode.total);
 
-    let currentDishSubtotal = (liters && liters > 0 ? baseDishPrice * liters : baseDishPrice);
-    let dishLabel = `${dishName.toUpperCase()}${isInHouse ? ' (IN-HOUSE CHEF)' : ' (DELIVERY)'}${liters ? ` (${liters}L)` : ''}`;
+    const dishName = rawName && !['false', 'no', 'none', '0', ''].includes(String(rawName).toLowerCase())
+      ? String(rawName).replace(/^(rc_|sp_|pr_|sw_|p_|s_)/gi, '').replace(/_/g, ' ').trim()
+      : 'Kitchen Meal Selection';
+
+    const finalDishPrice = baseDishPrice > 0 ? baseDishPrice : getDishUnitPrice(dishName);
+
+    const liters = dishNode.liters ? Number(dishNode.liters) : (dishNode.quantity ? Number(dishNode.quantity) : (dishNode.qty ? Number(dishNode.qty) : 1));
+    let baseDishSubtotal = finalDishPrice * (liters > 0 ? liters : 1);
+    
+    const globalServiceMode = String(booking.kitchenServiceMode || booking.serviceMode || '').toLowerCase();
+    const localServiceMode = String(dishNode.serviceMode || dishNode.prepMode || globalServiceMode).toLowerCase();
+    const isInHouse = localServiceMode.includes('house') || localServiceMode.includes('chef') || localServiceMode.includes('cooking');
+    if (isInHouse) {
+      baseDishSubtotal += 20000;
+    }
 
     let proteinSubtotal = 0;
     const proteinLines: string[] = [];
-    const rawProteins = dishNode.proteinAddons || dishNode.proteins || dishNode.proteinIds || dishNode.selectedProteins;
+    const rawProteins = dishNode.proteinAddons || dishNode.proteins || dishNode.proteinIds || dishNode.selectedProteins || dishNode.protein;
 
     if (rawProteins) {
       const processProteinItem = (pName: string, qty: number, unitPrice: number, priceOverride?: number) => {
-        const uPrice = unitPrice || getProteinUnitPrice(pName);
-        const price = priceOverride || (qty * uPrice);
+        if (!pName || ['false', 'no', 'none'].includes(pName.toLowerCase())) return;
+        const price = priceOverride && priceOverride > 0 ? priceOverride : (qty * (unitPrice > 0 ? unitPrice : getProteinUnitPrice(pName)));
         proteinSubtotal += price;
-        proteinLines.push(`  + Protein: ${pName} (${qty} pcs) - ₦${price.toLocaleString()}`);
+        proteinLines.push(`    + protein add-on: ${pName} (${qty} pcs) - ₦${Number(price || 0).toLocaleString()}`);
       };
 
       if (Array.isArray(rawProteins)) {
         rawProteins.forEach((p) => {
-          if (typeof p === 'string') processProteinItem(p.replace(/^pr_/, '').replace(/_/g, ' ').toUpperCase(), 1, 0);
-          else if (p && typeof p === 'object') {
-            processProteinItem(String(p.name || p.id || 'protein').replace(/^pr_/, '').replace(/_/g, ' ').toUpperCase(), extractNumber(p.qty || 1), extractNumber(p.unitPrice), extractNumber(p.price));
+          if (typeof p === 'string') {
+            const cleanP = p.replace(/^(pr_|p_)/gi, '').replace(/_/g, ' ').toUpperCase();
+            const uPrice = getProteinUnitPrice(cleanP);
+            processProteinItem(cleanP, 1, uPrice, uPrice);
+          } else if (p && typeof p === 'object') {
+            const pName = String(p.name || p.id || p.title || p.foodName || p.proteinName || '').replace(/^(pr_|p_)/gi, '').replace(/_/g, ' ').toUpperCase();
+            const qty = extractNumber(p.qty || p.quantity || 1);
+            const uPrice = extractNumber(p.unitPrice || p.price || p.cost || 0);
+            const finalUPrice = uPrice > 0 ? uPrice : getProteinUnitPrice(pName);
+            processProteinItem(pName, qty, finalUPrice, finalUPrice * qty);
           }
         });
       } else if (typeof rawProteins === 'object') {
         Object.entries(rawProteins).forEach(([pKey, pVal]: [string, any]) => {
-          const cleanP = pKey.replace(/^pr_/, '').replace(/_/g, ' ').toUpperCase();
-          if (typeof pVal === 'number') processProteinItem(cleanP, 1, pVal, pVal);
-          else if (pVal && typeof pVal === 'object') processProteinItem(cleanP, extractNumber(pVal.qty || 1), extractNumber(pVal.unitPrice), extractNumber(pVal.price));
-          else processProteinItem(cleanP, 1, 0);
+          const cleanP = pKey.replace(/^(pr_|p_)/gi, '').replace(/_/g, ' ').toUpperCase();
+          if (typeof pVal === 'number' && pVal > 0) {
+            processProteinItem(cleanP, 1, pVal, pVal);
+          } else if (pVal && typeof pVal === 'object') {
+            const qty = extractNumber(pVal.qty || pVal.quantity || 1);
+            const uPrice = extractNumber(pVal.unitPrice || pVal.price || pVal.cost || pVal.total || 0);
+            const finalUPrice = uPrice > 0 ? uPrice : getProteinUnitPrice(cleanP);
+            processProteinItem(cleanP, qty, finalUPrice, finalUPrice > 0 ? finalUPrice * qty : getProteinUnitPrice(cleanP) * qty);
+          } else if (pVal === true || pVal === 'true' || pVal === 1) {
+            const uPrice = getProteinUnitPrice(cleanP);
+            processProteinItem(cleanP, 1, uPrice, uPrice);
+          }
         });
       }
     }
 
-    currentDishSubtotal += proteinSubtotal;
-    dishLabel += ` - ₦${currentDishSubtotal.toLocaleString()}`;
-    itemNames.push(dishLabel);
-    proteinLines.forEach(pl => itemNames.push(pl));
-    calculatedCost += currentDishSubtotal;
+    const currentDishSubtotal = baseDishSubtotal + proteinSubtotal;
+    const dishLabel = `${dishName.toLowerCase()} - ₦${baseDishSubtotal.toLocaleString()}${isInHouse ? ' (IN-HOUSE CHEF +₦20k)' : ''}`;
+    const mealTotalLine = `    ↳ meal total: ₦${currentDishSubtotal.toLocaleString()}`;
+
+    return { 
+      subtotal: currentDishSubtotal, 
+      labelLines: [dishLabel, ...proteinLines, mealTotalLine] 
+    };
   };
 
-  const traverse = (node: any) => {
-    if (!node || typeof node !== 'object') return;
-    if (Array.isArray(node)) { node.forEach(item => traverse(item)); return; }
-    Object.entries(node).forEach(([key, val]) => {
-      if (['prepModes', 'serviceMode', 'totalPrice'].includes(key)) return;
-      const parsed = parseJson(val);
-      if (parsed && typeof parsed === 'object') {
-        if (parsed.name || parsed.title || parsed.price !== undefined || parsed.proteinIds || parsed.proteins || parsed.liters) {
-          processDishNode(key, parsed);
-        } else {
-          traverse(parsed);
-        }
+  const traverseAndCollect = (sourceObj: any) => {
+    if (!sourceObj) return;
+    if (typeof sourceObj === 'number') {
+      calculatedCost += sourceObj;
+      itemNames.push(`Kitchen Package - ₦${sourceObj.toLocaleString()}`);
+      return;
+    }
+    if (typeof sourceObj !== 'object') return;
+    
+    Object.entries(sourceObj).forEach(([dateKey, dateVal]) => {
+      if (['serviceMode', 'prepMode', 'totalPrice', 'totalCost', 'active', 'enabled'].includes(dateKey)) return;
+      
+      const parsedDateVal = parseJson(dateVal);
+      if (!parsedDateVal) return;
+
+      let dateSubtotal = 0;
+      const dateLines: string[] = [];
+
+      if (typeof parsedDateVal === 'object' && !Array.isArray(parsedDateVal)) {
+        Object.entries(parsedDateVal).forEach(([subKey, subVal]) => {
+          if (['serviceMode', 'prepMode', 'totalPrice'].includes(subKey)) return;
+          const parsedSub = parseJson(subVal);
+
+          const isDish = parsedSub && typeof parsedSub === 'object' && (parsedSub.foodName || parsedSub.mealName || parsedSub.name || parsedSub.title || parsedSub.item || parsedSub.price !== undefined || parsedSub.unitPrice !== undefined || parsedSub.proteins || parsedSub.proteinAddons);
+
+          if (isDish) {
+            const res = processDishNode(parsedSub, subKey);
+            if (res.subtotal > 0 || res.labelLines.length > 0) {
+              dateSubtotal += res.subtotal;
+              res.labelLines.forEach(l => dateLines.push(`  ${l}`));
+            }
+          } else if (parsedSub && typeof parsedSub === 'object') {
+            dateLines.push(`  📂 ${subKey.toUpperCase()}:`);
+            Object.entries(parsedSub).forEach(([dishKey, dishVal]) => {
+              const res = processDishNode(dishVal, dishKey);
+              if (res.subtotal > 0 || res.labelLines.length > 0) {
+                dateSubtotal += res.subtotal;
+                res.labelLines.forEach(l => dateLines.push(`    ${l}`));
+              }
+            });
+          }
+        });
+      }
+
+      if (dateSubtotal > 0 || dateLines.length > 0) {
+        itemNames.push(`📅 ${dateKey.toUpperCase()}:`);
+        dateLines.forEach(l => itemNames.push(l));
+        itemNames.push(`  ↳ day total: ₦${dateSubtotal.toLocaleString()}`);
+        calculatedCost += dateSubtotal;
       }
     });
   };
 
-  traverse(mealsObj);
-  return { names: Array.from(new Set(itemNames)), totalCost: explicitTotal > 0 ? explicitTotal : calculatedCost };
+  traverseAndCollect(mealsObj);
+  traverseAndCollect(soupsObj);
+  
+  if (addons?.kitchen && mealsObj !== addons.kitchen) {
+    traverseAndCollect(addons?.kitchen);
+  }
+
+  const finalTotalCost = explicitTotal > 0 ? explicitTotal : (calculatedCost > 0 ? calculatedCost : 0);
+
+  if (itemNames.length === 0 && finalTotalCost > 0) {
+    itemNames.push(`Kitchen Package / Order - ₦${finalTotalCost.toLocaleString()}`);
+  }
+
+  return { names: Array.from(new Set(itemNames)), totalCost: finalTotalCost };
 };
 
-// --- CONCIERGE ADD-ON LIBRARY (DYNAMIC CATALOGUE PRICING) ---
+// --- CONCIERGE ADD-ON LIBRARY ---
 const CONCIERGE_CATALOGUE: Record<DepartmentKey, { baseRate: number; calculate: (booking: Booking, addons: any, nights: number) => { cost: number; lines: string[] } }> = {
   kitchen: {
     baseRate: 0,
@@ -215,9 +308,13 @@ const CONCIERGE_CATALOGUE: Record<DepartmentKey, { baseRate: number; calculate: 
     baseRate: 25000,
     calculate: (booking: Booking, addons: any, nights: number) => {
       const hkObj = addons?.housekeeping || addons?.housekeepingService || booking?.housekeeping;
+      const activeFlag = booking.housekeepingActive ?? addons?.housekeepingActive ?? hkObj?.active ?? hkObj?.enabled;
+      
+      if (activeFlag === false || activeFlag === 'false' || activeFlag === 'no' || (!hkObj && activeFlag === undefined && booking.housekeepingActive === undefined)) {
+        return { cost: 0, lines: [] };
+      }
+
       const explicit = extractNumber(typeof hkObj === 'object' ? (hkObj.total || hkObj.price || hkObj.amount) : hkObj);
-      const active = booking.housekeepingActive || addons?.housekeepingActive || 'yes';
-      if (String(active).toLowerCase() === 'no' || String(active).toLowerCase() === 'false') return { cost: 0, lines: [] };
       const cost = explicit > 0 ? explicit : 25000 * nights;
       return { cost, lines: [`Housekeeping Service (${nights} Night(s)) - ₦${cost.toLocaleString()}`] };
     }
@@ -226,6 +323,12 @@ const CONCIERGE_CATALOGUE: Record<DepartmentKey, { baseRate: number; calculate: 
     baseRate: 25000,
     calculate: (booking: Booking, addons: any, nights: number) => {
       const cObj = addons?.chauffeur || addons?.chauffeurService || addons?.chauffeur_service || booking?.chauffeur;
+      const activeFlag = booking.chauffeurActive ?? addons?.chauffeurActive ?? cObj?.active ?? cObj?.enabled;
+
+      if (activeFlag === false || activeFlag === 'false' || activeFlag === 'no' || (!cObj && activeFlag === undefined)) {
+        return { cost: 0, lines: [] };
+      }
+
       const vehicleType = String(typeof cObj === 'object' ? (cObj.car || cObj.vehicle || cObj.type || '') : (cObj || booking.chauffeurType || '')).toLowerCase();
       
       let rate = 25000;
@@ -243,24 +346,37 @@ const CONCIERGE_CATALOGUE: Record<DepartmentKey, { baseRate: number; calculate: 
     baseRate: 45000,
     calculate: (booking: Booking, addons: any) => {
       const aObj = addons?.airport || addons?.airportTransfer || addons?.airport_transfer || booking?.airport;
-      const transferType = String(booking.airportTransferType || (typeof aObj === 'object' ? (aObj.type || aObj.vehicle || aObj.car || '') : (aObj || ''))).toLowerCase();
-      const tripType = String(booking.airportTripDirection || booking.airportTripType || booking.tripType || (typeof aObj === 'object' ? (aObj.type || aObj.tripType || aObj.direction || aObj.trip || '') : '')).toLowerCase();
+      const activeFlag = booking.airportActive ?? addons?.airportActive ?? (typeof aObj === 'object' ? aObj?.active : undefined);
 
-      let rate = 45000;
-      if (transferType.includes('luxury')) rate = 85000;
-      const explicit = extractNumber(typeof aObj === 'object' ? (aObj.baseRate || aObj.price || aObj.amount || aObj.total) : 0);
-      const rateToUse = explicit > 0 ? explicit : rate;
+      if (activeFlag === false || activeFlag === 'false' || activeFlag === 'no' || (!aObj && activeFlag === undefined && !booking.airportTransferType && !booking.airportDirection)) {
+        return { cost: 0, lines: [] };
+      }
+
+      const transferStr = typeof aObj === 'string' ? aObj : (typeof aObj === 'object' ? (aObj.name || aObj.title || '') : '');
+      const explicitPrice = extractNumber(typeof aObj === 'object' ? (aObj.baseRate || aObj.price || aObj.amount || aObj.total) : aObj);
       
-      const isRound = tripType.includes('round') || tripType.includes('return') || tripType.includes('both');
-      const multiplier = isRound ? 2 : 1;
-      const cost = rateToUse * multiplier;
-      return { cost, lines: [`Airport Transfer (${isRound ? 'Round-Trip' : 'One-Way'}) - ₦${cost.toLocaleString()}`] };
+      let baseCost = explicitPrice > 0 ? explicitPrice : (transferStr.toLowerCase().includes('luxury') ? 85000 : 45000);
+
+      const tripTypeStr = `${transferStr} ${booking.airportTripDirection || booking.airportTripType || booking.tripType || booking.airportDirection || ''}`.toLowerCase();
+      const isRoundTrip = tripTypeStr.includes('round') || tripTypeStr.includes('return') || tripTypeStr.includes('both') || tripTypeStr.includes('two_way') || tripTypeStr.includes('2x');
+
+      const multiplier = isRoundTrip ? 2 : 1;
+      const cost = baseCost * multiplier;
+
+      const label = transferStr ? transferStr : `Airport Transfer${isRoundTrip ? ' (Round Trip)' : ''} - ₦${cost.toLocaleString()}`;
+      return { cost, lines: [label] };
     }
   },
   security: {
     baseRate: 80000,
     calculate: (booking: Booking, addons: any, nights: number) => {
       const sObj = addons?.security || addons?.securityService || booking?.security;
+      const activeFlag = booking.securityActive ?? addons?.securityActive ?? sObj?.active ?? sObj?.enabled;
+
+      if (activeFlag === false || activeFlag === 'false' || activeFlag === 'no' || (!sObj && activeFlag === undefined)) {
+        return { cost: 0, lines: [] };
+      }
+
       const secType = String(booking.securityType || (typeof sObj === 'object' ? (sObj.type || sObj.category || '') : (sObj || 'tactical'))).toLowerCase();
       
       let rate = 80000;
@@ -277,48 +393,74 @@ const CONCIERGE_CATALOGUE: Record<DepartmentKey, { baseRate: number; calculate: 
   laundry: {
     baseRate: 15000,
     calculate: (booking: Booking, addons: any) => {
-      const adult = Number(booking.laundryAdult || addons?.laundryAdult || 0);
-      const kid = Number(booking.laundryKid || addons?.laundryKid || 0);
-      const suit = Number(booking.laundrySuit || addons?.laundrySuit || 0);
-      const calc = (adult * 1500) + (kid * 1000) + (suit * 3000);
-
       const lObj = addons?.laundry || addons?.drycleaning || booking?.laundry;
+      const activeFlag = booking.laundryActive ?? addons?.laundryActive ?? lObj?.active ?? lObj?.enabled;
+
+      const adult = Number(booking.laundryAdult || addons?.laundryAdult || (typeof lObj === 'object' ? lObj.adult : 0) || 0);
+      const kid = Number(booking.laundryKid || addons?.laundryKid || (typeof lObj === 'object' ? lObj.kid : 0) || 0);
+      const suit = Number(booking.laundrySuit || addons?.laundrySuit || (typeof lObj === 'object' ? lObj.suit : 0) || 0);
+      
+      if ((activeFlag === false || activeFlag === 'false' || activeFlag === 'no') && adult === 0 && kid === 0 && suit === 0 && !lObj) {
+        return { cost: 0, lines: [] };
+      }
+
+      const calc = (adult * 1500) + (kid * 1000) + (suit * 3000);
       const explicit = extractNumber(typeof lObj === 'object' ? (lObj.total || lObj.price || lObj.amount) : lObj);
-      const cost = explicit > 0 ? explicit : (calc > 0 ? calc : 15000);
+      const cost = explicit > 0 ? explicit : (calc > 0 ? calc : 0);
 
       const lines = [];
       if (adult > 0) lines.push(`  + Adult Pcs: ${adult} (₦${(adult * 1500).toLocaleString()})`);
       if (kid > 0) lines.push(`  + Kid Pcs: ${kid} (₦${(kid * 1000).toLocaleString()})`);
       if (suit > 0) lines.push(`  + Suit Pcs: ${suit} (₦${(suit * 3000).toLocaleString()})`);
-      if (lines.length === 0) lines.push(`Laundry Service - ₦${cost.toLocaleString()}`);
+      if (lines.length === 0 && cost > 0) lines.push(`Laundry Service - ₦${cost.toLocaleString()}`);
       return { cost, lines };
     }
   },
   beddings: {
     baseRate: 13000,
     calculate: (booking: Booking, addons: any, nights: number) => {
-      const bBedding = booking.beddingBeddings ?? addons?.beddingBeddings ?? true;
-      const bTowels = booking.beddingTowels ?? addons?.beddingTowels ?? true;
+      const bObj = addons?.beddings || addons?.linen || booking?.beddings;
+      
+      const bBedding = booking.beddingBeddings ?? addons?.beddingBeddings ?? (typeof bObj === 'object' ? bObj?.beddings : undefined);
+      const bTowels = booking.beddingTowels ?? addons?.beddingTowels ?? (typeof bObj === 'object' ? bObj?.towels : undefined);
+
+      const isBeddingActive = bBedding && !['no', 'false', 'none', ''].includes(String(bBedding).toLowerCase());
+      const isTowelsActive = bTowels && !['no', 'false', 'none', ''].includes(String(bTowels).toLowerCase());
+
+      if (!isBeddingActive && !isTowelsActive && !bObj) {
+        return { cost: 0, lines: [] };
+      }
+
       let cost = 0;
       const lines = [];
 
-      if (bBedding && String(bBedding).toLowerCase() !== 'no' && String(bBedding).toLowerCase() !== 'false') {
-        cost += 10000 * nights;
-        lines.push(`Beddings Package (₦10k × ${nights} nights)`);
+      if (isBeddingActive || bObj) {
+        const bedRate = extractNumber(bObj?.beddingRate || booking?.beddingRate || 10000);
+        const bedSubtotal = bedRate * nights;
+        cost += bedSubtotal;
+        lines.push(`Beddings Package (₦${bedRate.toLocaleString()} × ${nights} nights) - ₦${bedSubtotal.toLocaleString()}`);
       }
-      if (bTowels && String(bTowels).toLowerCase() !== 'no' && String(bTowels).toLowerCase() !== 'false') {
-        cost += 3000 * nights;
-        lines.push(`Towels Package (₦3k × ${nights} nights)`);
+      if (isTowelsActive) {
+        const towelRate = extractNumber(bObj?.towelRate || booking?.towelRate || 3000);
+        const towelSubtotal = towelRate * nights;
+        cost += towelSubtotal;
+        lines.push(`Towels Package (₦${towelRate.toLocaleString()} × ${nights} nights) - ₦${towelSubtotal.toLocaleString()}`);
       }
-      const finalCost = cost > 0 ? cost : 13000 * nights;
-      return { cost: finalCost, lines: lines.length > 0 ? lines : [`Beddings & Linens - ₦${(13000 * nights).toLocaleString()}`] };
+      return { cost, lines };
     }
   },
   shopper: {
     baseRate: 15000,
     calculate: (booking: Booking, addons: any, nights: number) => {
-      const count = Number(booking.shoppersCount || addons?.shoppersCount || 1);
-      const explicit = extractNumber(addons?.shopperTotal || booking?.shopperTotal);
+      const sObj = addons?.shopper || booking?.shopper;
+      const activeFlag = booking.shopperActive ?? addons?.shopperActive ?? sObj?.active;
+
+      if (activeFlag === false || activeFlag === 'false' || activeFlag === 'no' || (!sObj && activeFlag === undefined && !booking.shoppersCount)) {
+        return { cost: 0, lines: [] };
+      }
+
+      const count = Number(booking.shoppersCount || addons?.shoppersCount || (typeof sObj === 'object' ? sObj.count : 1) || 1);
+      const explicit = extractNumber(addons?.shopperTotal || booking?.shopperTotal || (typeof sObj === 'object' ? sObj.total : 0));
       const cost = explicit > 0 ? explicit : 15000 * count * nights;
       return { cost, lines: [`Personal Shopper (${count} Shopper(s) × ${nights} Days) - ₦${cost.toLocaleString()}`] };
     }
@@ -326,46 +468,38 @@ const CONCIERGE_CATALOGUE: Record<DepartmentKey, { baseRate: number; calculate: 
 };
 
 const isBookingActiveForDepartment = (b: Booking, deptId: DepartmentKey): boolean => {
-  const directRev = Number(b[`${deptId}Revenue`]);
+  const directRev = Number(b[`${deptId}Revenue`] || b[`${deptId}Total`] || 0);
   if (!isNaN(directRev) && directRev > 0) return true;
   if (b.departmentalBreakdown && Number(b.departmentalBreakdown[deptId]) > 0) return true;
 
   const addons = parseJson(b?.addons);
+  const nights = Math.max(1, Number(b?.totalNights) || 1);
   const catalogEntry = CONCIERGE_CATALOGUE[deptId];
-  if (catalogEntry) {
-    const nights = Math.max(1, Number(b?.totalNights) || 1);
-    const result = catalogEntry.calculate(b, addons, nights);
-    if (result.cost > 0 || result.lines.length > 0) return true;
-  }
 
-  const val = b[deptId] || addons[deptId] || addons[`${deptId}Service`] || (b.departmentalBreakdown && b.departmentalBreakdown[deptId]);
-  return val !== undefined && val !== null && val !== '' && val !== false && val !== 'false' && val !== 'none';
+  if (catalogEntry) {
+    const result = catalogEntry.calculate(b, addons, nights);
+    return result.cost > 0 || result.lines.length > 0;
+  }
+  return false;
 };
 
 const calculateSingleBookingDeptRevenue = (b: Booking, config: DeptConfig): number => {
-  const directRev = Number(b[`${config.id}Revenue`]);
-  if (!isNaN(directRev) && directRev > 0) return directRev;
-  if (b.departmentalBreakdown && typeof b.departmentalBreakdown[config.id] === 'number' && b.departmentalBreakdown[config.id] > 0) {
-    return b.departmentalBreakdown[config.id];
-  }
-
   const addons = parseJson(b?.addons);
   const nights = Math.max(1, Number(b?.totalNights) || 1);
   const catalogEntry = CONCIERGE_CATALOGUE[config.id];
 
   if (catalogEntry) {
-    return catalogEntry.calculate(b, addons, nights).cost;
+    const calculated = catalogEntry.calculate(b, addons, nights).cost;
+    if (calculated > 0) return calculated;
   }
+
+  const directRev = Number(b[`${config.id}Revenue`] || b[`${config.id}Total`] || 0);
+  if (!isNaN(directRev) && directRev > 0) return directRev;
+  if (b.departmentalBreakdown && typeof b.departmentalBreakdown[config.id] === 'number') {
+    return b.departmentalBreakdown[config.id];
+  }
+
   return 0;
-};
-
-const getBookingGrandTotal = (b: Booking): number => {
-  const directTotal = Number(b?.grandTotal || b?.totalAmount || b?.total);
-  if (!isNaN(directTotal) && directTotal > 0) return directTotal;
-
-  const baseTotal = (Math.max(1, Number(b?.totalNights) || 1)) * Number(b?.pricePerNight || b?.listing?.pricePerNight || 0);
-  const addonsRev = DEPARTMENT_CONFIGS.reduce((sum, config) => sum + calculateSingleBookingDeptRevenue(b, config), 0);
-  return baseTotal + addonsRev;
 };
 
 const getBookingApartmentRevenue = (b: Booking): number => {
@@ -376,8 +510,13 @@ const getBookingApartmentRevenue = (b: Booking): number => {
   const pricePerNight = Number(b?.pricePerNight || b?.listing?.pricePerNight || 0);
   if (pricePerNight > 0) return nights * pricePerNight;
 
-  const addonsRev = DEPARTMENT_CONFIGS.reduce((sum, config) => sum + calculateSingleBookingDeptRevenue(b, config), 0);
-  return Math.max(0, getBookingGrandTotal(b) - addonsRev);
+  const directTotal = Number(b?.grandTotal || b?.totalAmount || b?.total);
+  if (!isNaN(directTotal) && directTotal > 0) {
+    const addonsRev = DEPARTMENT_CONFIGS.reduce((sum, config) => sum + calculateSingleBookingDeptRevenue(b, config), 0);
+    return Math.max(0, directTotal - addonsRev);
+  }
+
+  return 0;
 };
 
 // --- MAIN COMPONENT ---
@@ -385,18 +524,34 @@ export default function AdminDashboard() {
   const [session, setSession] = useState<any>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
 
-  // Login Form States
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  // Dashboard Operational States
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
+
+  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+    setBookings([]);
+  };
+
+  const resetInactivityTimer = () => {
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    if (session) {
+      inactivityTimerRef.current = setTimeout(() => {
+        handleLogout();
+        alert('Session expired due to 60 minutes of inactivity.');
+      }, 60 * 60 * 1000);
+    }
+  };
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -412,6 +567,24 @@ export default function AdminDashboard() {
     return () => subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (!session) {
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      return;
+    }
+
+    const events = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    const handleUserActivity = () => resetInactivityTimer();
+
+    events.forEach(event => window.addEventListener(event, handleUserActivity));
+    resetInactivityTimer();
+
+    return () => {
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      events.forEach(event => window.removeEventListener(event, handleUserActivity));
+    };
+  }, [session]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
@@ -424,12 +597,6 @@ export default function AdminDashboard() {
     } finally {
       setIsLoggingIn(false);
     }
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setSession(null);
-    setBookings([]);
   };
 
   const fetchBookings = async () => {
@@ -578,7 +745,7 @@ export default function AdminDashboard() {
         )}
         
         {activeDeptConfig && (
-          <DepartmentSection config={activeDeptConfig} bookings={activeDeptBookings} revenue={departmentRevenues[activeDeptConfig.id]} />
+          <DepartmentSection config={activeDeptConfig} bookings={activeDeptBookings} revenue={departmentRevenues[activeDeptConfig.id]} selectedDate={selectedDate} />
         )}
       </main>
     </div>
@@ -603,7 +770,7 @@ function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQue
     <div className="space-y-6">
       <div className="flex justify-between items-center border-b border-gray-800 pb-4">
         <div>
-          <h2 className="text-xl font-extrabold text-white">Operations Overview & Analytics</h2>
+          <h2 className="text-xl font-extrabold text-white">Overview & Analytics</h2>
           <p className="text-xs text-gray-400 mt-0.5">Showing data for <span className="text-cyan-400 font-bold">{selectedDate || 'All Time'}</span></p>
         </div>
         <input type="text" placeholder="🔍 Search Ref No. or Guest..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-72 px-3.5 py-2 text-xs rounded-lg bg-gray-900 border border-gray-700 text-white focus:border-cyan-500" />
@@ -612,7 +779,7 @@ function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQue
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <StatCard title="Total Bookings" icon="📅" value={filteredBookings.length} desc="Active fulfillment stream" />
         <StatCard title="Total Active Units" icon="🏠" value={topListings.length} desc="High demand properties" />
-        <StatCard title="Total Est. Guests" icon="👥" value={filteredBookings.reduce((acc: any, b: any) => acc + (Number(b?.guests) || 1), 0)} desc="Verified guest logs" />
+        <StatCard title="Total Est. Guests" icon="👥" value={filteredBookings.reduce((acc: any, b: any) => acc + (Number(b?.guests || b?.guestCount) || 1), 0)} desc="Verified guest logs" />
         <StatCard title="Total Revenue" icon="💰" value={`₦${totalRevenue.toLocaleString()}`} desc="Aggregate earnings" />
       </div>
 
@@ -644,6 +811,7 @@ function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQue
               const activeDepts = DEPARTMENT_CONFIGS.filter(c => isBookingActiveForDepartment(b, c.id));
               const aptRev = getBookingApartmentRevenue(b);
               const refNo = b?.paymentReference || b?.reference || b?.id || 'N/A';
+              const grandTotal = aptRev + DEPARTMENT_CONFIGS.reduce((sum, c) => sum + calculateSingleBookingDeptRevenue(b, c), 0);
 
               return (
                 <div key={bookingKey} className="p-4 rounded-lg bg-gray-900 border border-gray-800 space-y-3">
@@ -657,7 +825,7 @@ function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQue
                         <span className="text-cyan-400 font-mono">{b?.listingId || 'Suite'}</span> | 📞 {b?.phone || b?.phoneNumber || 'N/A'} | Stay: {b?.checkIn ? new Date(b.checkIn).toLocaleDateString() : 'N/A'} ({nights} Night(s))
                       </div>
                     </div>
-                    <span className="text-amber-400 font-mono font-bold text-xs">Total: ₦{getBookingGrandTotal(b).toLocaleString()}</span>
+                    <span className="text-amber-400 font-mono font-bold text-xs">Total: ₦{grandTotal.toLocaleString()}</span>
                   </div>
 
                   <div className="flex flex-wrap gap-2 text-[11px]">
@@ -675,7 +843,6 @@ function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQue
                     {activeDepts.length === 0 && <span className="text-gray-500 italic">No extra add-ons selected</span>}
                   </div>
 
-                  {/* Render All Active Concierge & Kitchen Add-on Breakdown Lists */}
                   {activeDepts.length > 0 && (
                     <div className="mt-3 pt-3 border-t border-gray-800 space-y-3">
                       <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 block">Detailed Service & Add-on Breakdown:</span>
@@ -757,16 +924,75 @@ function ApartmentsTab({ filteredBookings, apartmentsRevenue }: any) {
   );
 }
 
-function DepartmentSection({ config, bookings, revenue }: { config: DeptConfig; bookings: Booking[]; revenue: number }) {
+function DepartmentSection({ config, bookings, revenue, selectedDate }: { config: DeptConfig; bookings: Booking[]; revenue: number; selectedDate: string }) {
+  const handleDownloadSchedule = () => {
+    let reportText = `========================================\n`;
+    reportText += `DEPARTMENT SCHEDULE: ${config.name.toUpperCase()}\n`;
+    reportText += `Generated For: ${selectedDate || 'All-Time / Active Shifts'}\n`;
+    reportText += `Total Department Revenue: ₦${revenue.toLocaleString()}\n`;
+    reportText += `========================================\n\n`;
+
+    if (bookings.length === 0) {
+      reportText += `No active bookings/tasks found for this department.\n`;
+    } else {
+      bookings.forEach((b, idx) => {
+        const addons = parseJson(b?.addons);
+        const nights = Math.max(1, Number(b?.totalNights) || 1);
+        const catalogEntry = CONCIERGE_CATALOGUE[config.id];
+        const deptTotal = calculateSingleBookingDeptRevenue(b, config);
+        const refNo = b?.paymentReference || b?.reference || b?.id || 'N/A';
+
+        reportText += `[${idx + 1}] Guest: ${b?.customerName || 'Guest'} (${b?.listingId || 'Suite'})\n`;
+        reportText += `    - Ref No: ${refNo}\n`;
+        reportText += `    - Phone: ${b?.phone || b?.phoneNumber || 'N/A'}\n`;
+        reportText += `    - Stay: ${b?.checkIn ? new Date(b.checkIn).toLocaleDateString() : 'N/A'} to ${b?.checkOut ? new Date(b.checkOut).toLocaleDateString() : 'N/A'} (${nights} Nights)\n`;
+        
+        if (catalogEntry) {
+          const { lines } = catalogEntry.calculate(b, addons, nights);
+          reportText += `    - Task Details:\n`;
+          if (lines.length > 0) {
+            lines.forEach(l => reportText += `      * ${l}\n`);
+          } else {
+            reportText += `      * Standard Assignment\n`;
+          }
+        }
+        reportText += `    - Subtotal Allocation: ₦${deptTotal.toLocaleString()}\n`;
+        reportText += `----------------------------------------\n`;
+      });
+    }
+
+    const blob = new Blob([reportText], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${config.id}_schedule_${selectedDate || 'all_time'}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center bg-gray-950 p-4 rounded-xl border border-gray-800">
-        <h2 className={`text-sm font-bold uppercase tracking-wider ${config.color}`}>{config.name} Logs</h2>
-        <div className="text-right">
-          <span className="text-[11px] text-gray-400 block">Department Revenue</span>
-          <span className={`text-base font-extrabold font-mono ${config.color}`}>₦{revenue.toLocaleString()}</span>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-gray-950 p-4 rounded-xl border border-gray-800 gap-4">
+        <div>
+          <h2 className={`text-sm font-extrabold uppercase tracking-wider ${config.color}`}>{config.name} Logs & Schedule</h2>
+          <p className="text-[11px] text-gray-400">Download or export operational assignments for department head distribution.</p>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="text-right">
+            <span className="text-[11px] text-gray-400 block">Department Revenue</span>
+            <span className={`text-base font-extrabold font-mono ${config.color}`}>₦{revenue.toLocaleString()}</span>
+          </div>
+          <button 
+            onClick={handleDownloadSchedule}
+            className="px-3.5 py-2 text-xs font-bold rounded-lg bg-cyan-950 border border-cyan-700 hover:bg-cyan-900 text-cyan-300 transition cursor-pointer flex items-center gap-1.5 shadow-md"
+          >
+            📥 Download Schedule
+          </button>
         </div>
       </div>
+
       <div className="space-y-4">
         {bookings.length === 0 ? (
           <div className="p-6 rounded-xl bg-gray-950 border border-gray-800 text-center text-gray-500 text-xs italic">

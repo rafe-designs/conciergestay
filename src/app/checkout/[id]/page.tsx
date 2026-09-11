@@ -34,9 +34,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   // Active selected day tab for daily meal picker
   const [selectedDayTab, setSelectedDayTab] = useState<string>('');
 
-  // 2. Per-Day Catering & Food State
-  const [dailyPrepModes, setDailyPrepModes] = useState<Record<string, 'delivery' | 'in_house'>>({});
-
+  // 2. Per-Day Catering & Food State (All orders set to delivery)
   // Menu Category Navigation
   const [activeTab, setActiveTab] = useState<'rice' | 'breakfast' | 'dinner' | 'soups' | 'spiced_comforts'>('rice');
 
@@ -89,6 +87,14 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
   const nights = stayDates.length;
 
+  // Automatically reset bedding and towel selections if stay is 1 night or less
+  useEffect(() => {
+    if (nights <= 1) {
+      setBeddingBeddings('no');
+      setBeddingTowels('no');
+    }
+  }, [nights]);
+
   // Ensure active day tab points to a valid stay date
   const activeDay = useMemo(() => {
     if (stayDates.includes(selectedDayTab)) return selectedDayTab;
@@ -107,8 +113,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
     stayDates.forEach((date) => {
       const dayMeals = dailyMeals[date] || {};
-      const dayPrepMode = dailyPrepModes[date] || 'delivery';
-      const chefSurcharge = dayPrepMode === 'in_house' ? 20000 : 0;
 
       Object.entries(dayMeals).forEach(([mealId, data]) => {
         let basePricePerLiter = 0;
@@ -117,8 +121,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
           if (found) basePricePerLiter = found.basePrice;
         });
 
-        const effectivePricePerLiter = basePricePerLiter + chefSurcharge;
-
         let proteinCost = 0;
         (data.proteins || []).forEach((item) => {
           const p = PROTEIN_OPTIONS.find((opt) => opt.id === item.id);
@@ -126,14 +128,13 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         });
 
         const cappedLiters = Math.min(data.liters, 10);
-        diningTotal += (effectivePricePerLiter * cappedLiters) + proteinCost;
+        diningTotal += (basePricePerLiter * cappedLiters) + proteinCost;
       });
 
       const daySoups = dailySoups[date] || {};
       Object.entries(daySoups).forEach(([soupId, data]) => {
         const soup = ALL_SOUP_AND_COMFORT_OPTIONS.find((s) => s.id === soupId);
         if (soup) {
-          const effectivePricePerLiter = soup.pricePerLiter + chefSurcharge;
           let proteinCost = 0;
           (data.proteins || []).forEach((item) => {
             const p = PROTEIN_OPTIONS.find((opt) => opt.id === item.id);
@@ -141,7 +142,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
           });
 
           const cappedLiters = Math.min(data.liters, 10);
-          diningTotal += (effectivePricePerLiter * cappedLiters) + proteinCost;
+          diningTotal += (soup.pricePerLiter * cappedLiters) + proteinCost;
         }
       });
     });
@@ -186,8 +187,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       }
     }
 
-    if (beddingBeddings === 'yes') conciergeTotal += 10000 * nights;
-    if (beddingTowels === 'yes') conciergeTotal += 3000 * nights;
+    // Dynamic Bedding & Towel Calculation (Only applies if stay is longer than 1 night)
+    if (nights > 1) {
+      if (beddingBeddings === 'yes') conciergeTotal += 10000 * nights;
+      if (beddingTowels === 'yes') conciergeTotal += 3000 * nights;
+    }
 
     return {
       accommodation,
@@ -199,7 +203,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     listing,
     nights,
     stayDates,
-    dailyPrepModes,
     dailyMeals,
     dailySoups,
     ALL_SOUP_AND_COMFORT_OPTIONS,
@@ -278,7 +281,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     });
   };
 
-  // Soup & Spiced Comfort Protein Toggle & Quantity Handlers
   const toggleSoupProtein = (date: string, soupId: string, proteinId: string) => {
     const daySoups = dailySoups[date] || {};
     const currentData = daySoups[soupId];
@@ -321,10 +323,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     });
   };
 
-  const activePrepMode = dailyPrepModes[activeDay] || 'delivery';
-  const chefSurcharge = activePrepMode === 'in_house' ? 20000 : 0;
-
-  // Paystack Popup Handler using Official Package Class
+  // Paystack Popup Handler
   const handlePaystackPayment = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -360,6 +359,30 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         onSuccess: async (response: { reference: string }) => {
           const finalRef = response.reference || uniqueTxRef;
 
+          let formattedAirportTransfer = 'None';
+          if (airportTransferType !== 'none') {
+            const vehicleName = airportTransferType === 'suv' ? 'Luxury SUV (₦85,000)' : 'Executive Sedan (₦45,000)';
+            const directionLabel = 
+              airportTripDirection === 'round_trip' ? 'Round Trip (2x Fare)' :
+              airportTripDirection === 'one_way_dropoff' ? 'One-Way Drop-off' : 'One-Way Pick-up';
+            formattedAirportTransfer = `${directionLabel} - ${vehicleName}`;
+          }
+
+          let formattedChauffeur = 'None';
+          if (chauffeurService !== 'none') {
+            formattedChauffeur = 
+              chauffeurService === 'luxury_sedan' ? `Luxury Sedan (${nights} Days)` :
+              chauffeurService === 'commuter' ? `Executive Commuter Shuttle (${nights} Days)` : `Executive Sedan (${nights} Days)`;
+          }
+
+          let formattedSecurity = 'None';
+          if (securityService !== 'none') {
+            const secLabel = 
+              securityService === 'bouncer' ? 'Protection (Bouncers)' :
+              securityService === 'bodyguard' ? 'Executive Bodyguards' : 'Tactical Unit';
+            formattedSecurity = `${secLabel} (${securityCount} Personnel, ${nights} Nights)`;
+          }
+
           const payload = {
             transactionRef: finalRef,
             listingId: resolvedParams.id,
@@ -374,31 +397,23 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             grandTotal: totals.totalDue,
             apartmentCut: totals.accommodation,
             servicesCut: totals.diningTotal + totals.conciergeTotal,
-            guestInfo: {
-              fullName,
-              email,
-              phone,
-              guests,
-            },
+            guestInfo: { fullName, email, phone, guests },
             dailyMealSelections: {
               meals: dailyMeals,
               soups: dailySoups,
-              prepModes: dailyPrepModes,
             },
             addons: {
-              airportTransferType,
-              airportTripDirection,
-              chauffeurService,
-              securityService,
-              securityCount,
+              airportTransfer: formattedAirportTransfer,
+              chauffeurService: formattedChauffeur,
+              securityService: formattedSecurity,
               shoppersCount,
               laundryAdult,
               laundryKid,
               laundrySuit,
               housekeepingActive,
               housekeepingSchedule,
-              beddingBeddings,
-              beddingTowels,
+              beddingBeddings: nights > 1 ? beddingBeddings : 'no',
+              beddingTowels: nights > 1 ? beddingTowels : 'no',
             },
           };
 
@@ -499,35 +514,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
               <h2 className="text-yellow-400 text-xs tracking-wider uppercase font-bold">
                 🍽️ DAILY CULINARY SELECTION ({nights} DAY{nights > 1 ? 'S' : ''})
               </h2>
-
-              <div className="flex gap-2 bg-[#060b13] p-1 rounded-xl border border-slate-800">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setDailyPrepModes({ ...dailyPrepModes, [activeDay]: 'delivery' })
-                  }
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                    activePrepMode === 'delivery'
-                      ? 'bg-yellow-500 text-slate-950 font-bold'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Meal Delivery
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setDailyPrepModes({ ...dailyPrepModes, [activeDay]: 'in_house' })
-                  }
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                    activePrepMode === 'in_house'
-                      ? 'bg-yellow-500 text-slate-950 font-bold'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  In-House Chef
-                </button>
-              </div>
             </div>
 
             {nights === 0 ? (
@@ -567,7 +553,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                   })}
                 </div>
 
-                {/* Updated Menu Navigation Tabs */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-6">
                   {[
                     { key: 'rice', label: '🍚 Rice Options' },
@@ -582,7 +567,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                       onClick={() => setActiveTab(tab.key as any)}
                       className={`py-3 px-3 rounded-xl text-xs font-semibold text-center transition-all ${
                         activeTab === tab.key
-                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/40'
+                          ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/40'
                           : 'bg-[#060b13] text-slate-400 border border-slate-800/80'
                       }`}
                     >
@@ -596,7 +581,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     CULINARY_MEALS[activeTab]?.map((item: MealItem) => {
                       const currentData = dailyMeals[activeDay]?.[item.id] || { liters: 0, proteins: [] };
                       const isSelected = currentData.liters > 0;
-                      const dynamicPrice = item.basePrice + chefSurcharge;
+                      const dynamicPrice = item.basePrice;
 
                       return (
                         <div
@@ -643,11 +628,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                                           type="checkbox"
                                           checked={isChecked}
                                           onChange={() => toggleMealProtein(activeDay, item.id, p.id)}
-                                          className="w-3 h-3 accent-cyan-400 rounded"
+                                          className="w-3 h-3 accent-yellow-400 rounded"
                                         />
                                         <span className="text-xs text-slate-300">
                                           {p.name}{' '}
-                                          <span className="text-amber-400/80">(+₦{p.price.toLocaleString()})</span>
+                                          <span className="text-yellow-400/80">(+₦{p.price.toLocaleString()})</span>
                                         </span>
                                       </label>
 
@@ -667,7 +652,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                                                 parseInt(e.target.value) || 1
                                               )
                                             }
-                                            className="w-12 bg-[#060b13] border border-cyan-500/40 rounded p-1 text-center text-xs text-cyan-300 focus:outline-none"
+                                            className="w-12 bg-[#060b13] border border-yellow-500/40 rounded p-1 text-center text-xs text-yellow-300 focus:outline-none"
                                           />
                                         </div>
                                       )}
@@ -684,7 +669,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     (activeTab === 'soups' ? SOUP_OPTIONS : SPICED_COMFORT_OPTIONS).map((soup) => {
                       const current = dailySoups[activeDay]?.[soup.id] || { liters: 0, swallow: 'Amala', proteins: [] };
                       const isSelected = current.liters > 0;
-                      const dynamicPrice = soup.pricePerLiter + chefSurcharge;
+                      const dynamicPrice = soup.pricePerLiter;
 
                       return (
                         <div key={soup.id} className="bg-[#060b13] border border-slate-800/80 rounded-xl p-4 space-y-3">
@@ -1021,10 +1006,19 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                 <select
                   value={beddingBeddings}
                   onChange={(e) => setBeddingBeddings(e.target.value)}
-                  className="w-full bg-[#060b13] border border-slate-700/60 rounded-xl p-3.5 text-xs text-slate-200 focus:outline-none"
+                  disabled={nights <= 1}
+                  className={`w-full bg-[#060b13] border rounded-xl p-3.5 text-xs text-slate-200 focus:outline-none ${
+                    nights <= 1 ? 'opacity-50 cursor-not-allowed border-slate-800' : 'border-slate-700/60'
+                  }`}
                 >
                   <option value="no">Standard (No Daily Change)</option>
-                  <option value="yes">Fresh Beddings Change Daily</option>
+                  {nights > 1 ? (
+                    <option value="yes">Fresh Beddings Change Daily</option>
+                  ) : (
+                    <option value="yes" disabled>
+                      Fresh Beddings Change Daily (Requires stay &gt; 1 night)
+                    </option>
+                  )}
                 </select>
               </div>
 
@@ -1033,10 +1027,19 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                 <select
                   value={beddingTowels}
                   onChange={(e) => setBeddingTowels(e.target.value)}
-                  className="w-full bg-[#060b13] border border-slate-700/60 rounded-xl p-3.5 text-xs text-slate-200 focus:outline-none"
+                  disabled={nights <= 1}
+                  className={`w-full bg-[#060b13] border rounded-xl p-3.5 text-xs text-slate-200 focus:outline-none ${
+                    nights <= 1 ? 'opacity-50 cursor-not-allowed border-slate-800' : 'border-slate-700/60'
+                  }`}
                 >
                   <option value="no">Standard Towel Rotation</option>
-                  <option value="yes">Fresh Luxury Towels Daily</option>
+                  {nights > 1 ? (
+                    <option value="yes">Fresh Luxury Towels Daily</option>
+                  ) : (
+                    <option value="yes" disabled>
+                      Fresh Luxury Towels Daily (Requires stay &gt; 1 night)
+                    </option>
+                  )}
                 </select>
               </div>
             </div>

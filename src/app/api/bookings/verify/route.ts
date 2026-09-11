@@ -19,18 +19,27 @@ function sanitizeAddons(rawAddons: any): Record<string, any> {
     }
   }
 
-  // Airport Transfer Filter
+  // Airport Transfer Filter with Fallback Auto-Parsing for Direction
   const airport = rawAddons.airport || rawAddons.airportTransfer;
   if (airport && !['None', 'No Airport Transfer', 'false'].includes(String(airport))) {
     sanitized.airport = airport;
-    if (rawAddons.airportDirection || rawAddons.direction || rawAddons.tripType) {
-      sanitized.airportDirection = rawAddons.airportDirection || rawAddons.direction || rawAddons.tripType;
+    
+    const explicitDirection = rawAddons.airportDirection || rawAddons.direction || rawAddons.tripType;
+    if (explicitDirection) {
+      sanitized.airportDirection = explicitDirection;
+    } else {
+      const stringVal = String(airport).toLowerCase();
+      if (stringVal.includes('round trip') || stringVal.includes('round_trip')) {
+        sanitized.airportDirection = 'round_trip';
+      } else if (stringVal.includes('one way') || stringVal.includes('one_way')) {
+        sanitized.airportDirection = 'one_way';
+      }
     }
   }
 
   // Housekeeping Filter
-  const hk = rawAddons.housekeeping || rawAddons.housekeepingService;
-  if (hk && !['None', 'No Housekeeping Service', 'false'].includes(String(hk))) {
+  const hk = rawAddons.housekeeping || rawAddons.housekeepingService || rawAddons.housekeepingActive;
+  if (hk && !['None', 'No Housekeeping Service', 'no', 'false'].includes(String(hk))) {
     sanitized.housekeeping = hk;
     if (rawAddons.housekeepingSchedule || rawAddons.frequency) {
       sanitized.housekeepingSchedule = rawAddons.housekeepingSchedule || rawAddons.frequency;
@@ -44,17 +53,36 @@ function sanitizeAddons(rawAddons: any): Record<string, any> {
   }
 
   // Laundry Filter
-  const laundry = rawAddons.laundry || rawAddons.drycleaning;
-  if (laundry && typeof laundry === 'object') {
-    const totalPcs = (Number(laundry.adult) || 0) + (Number(laundry.kid) || 0) + (Number(laundry.suit) || 0);
-    if (totalPcs > 0) sanitized.laundry = laundry;
+  const laundryObj = rawAddons.laundry && typeof rawAddons.laundry === 'object' ? rawAddons.laundry : {
+    adult: Number(rawAddons.laundryAdult) || 0,
+    kid: Number(rawAddons.laundryKid) || 0,
+    suit: Number(rawAddons.laundrySuit) || 0,
+  };
+  const totalPcs = (Number(laundryObj.adult) || 0) + (Number(laundryObj.kid) || 0) + (Number(laundryObj.suit) || 0);
+  if (totalPcs > 0) {
+    sanitized.laundry = laundryObj;
   }
 
-  // Beddings & Linen Filter
-  const beddings = rawAddons.beddings || rawAddons.linen;
-  const beddingSel = typeof beddings === 'object' ? beddings.selection : beddings;
-  if (beddings && !['None', 'Standard (No Daily Change)', 'false'].includes(String(beddingSel))) {
-    sanitized.beddings = beddings;
+  // Beddings & Linen Filter (Strictly ignores default 'no' and 'Standard' states)
+  let beddingsObj = rawAddons.beddings || rawAddons.linen;
+  if (!beddingsObj || typeof beddingsObj !== 'object') {
+    beddingsObj = {
+      towels: rawAddons.beddingTowels || 'no',
+      beddings: rawAddons.beddingBeddings || 'no',
+      selection: rawAddons.beddingSelection || 'Standard'
+    };
+  }
+  
+  const towelsVal = String(beddingsObj.towels || '').toLowerCase();
+  const beddingsVal = String(beddingsObj.beddings || '').toLowerCase();
+  const selectionVal = String(beddingsObj.selection || '').toLowerCase();
+
+  const hasActiveTowels = towelsVal === 'yes' || towelsVal === 'true' || towelsVal === '1' || (towelsVal !== 'no' && towelsVal !== 'false' && towelsVal !== '');
+  const hasActiveBeddings = beddingsVal === 'yes' || beddingsVal === 'true' || beddingsVal === '1' || (beddingsVal !== 'no' && beddingsVal !== 'false' && beddingsVal !== '');
+  const hasPaidSelection = selectionVal && !['none', 'standard', 'standard (no daily change)', 'false', 'no'].includes(selectionVal);
+
+  if (hasActiveTowels || hasActiveBeddings || hasPaidSelection) {
+    sanitized.beddings = beddingsObj;
   }
 
   // Personal Shopper Filter
@@ -68,12 +96,12 @@ function sanitizeAddons(rawAddons: any): Record<string, any> {
     const isHandledKey = [
       'security', 'securityType', 'securityService', 'securityCount', 'guards',
       'airport', 'airportTransfer', 'airportDirection', 'direction', 'tripType',
-      'housekeeping', 'housekeepingService', 'housekeepingSchedule', 'frequency',
-      'chauffeur', 'chauffeurService', 'laundry', 'drycleaning',
-      'beddings', 'linen', 'shopper', 'personalShopper'
+      'housekeeping', 'housekeepingService', 'housekeepingActive', 'housekeepingSchedule', 'frequency',
+      'chauffeur', 'chauffeurService', 'laundry', 'drycleaning', 'laundryAdult', 'laundryKid', 'laundrySuit',
+      'beddings', 'linen', 'beddingTowels', 'beddingBeddings', 'beddingSelection', 'shopper', 'personalShopper'
     ].includes(key);
 
-    if (!isHandledKey && value && value !== 'None' && value !== false && value !== 'No Additional Security' && value !== 'No Housekeeping Service') {
+    if (!isHandledKey && value && value !== 'None' && value !== false && value !== 'no' && value !== '0') {
       sanitized[key] = value;
     }
   });
@@ -124,18 +152,21 @@ export async function POST(request: Request) {
       activeAddons,
       status,
       paymentStatus,
+      pricePerNight,
     } = raw || {};
 
     const resolvedTxRef = txRefFromRoot || transactionRef || reference || `CS_REF_${Date.now()}`;
+    const parsedNights = Math.max(1, Number(totalNights) || 1);
     const parsedBaseRent = Number(baseRentTotal ?? stayCost ?? 0);
     const parsedServices = Number(servicesTotal ?? diningTotal ?? totalConciergePrice ?? 0);
     const parsedGrandTotal = Number(grandTotal ?? 0);
     const parsedPlatformFee = Number(platformFeeTotal ?? platformFee ?? 0);
+    const resolvedGuestCount = Number(guestCount ?? guestInfo?.guests ?? 1);
+    const resolvedPricePerNight = Number(pricePerNight ?? (parsedNights > 0 ? parsedBaseRent / parsedNights : 0));
 
     const resolvedCustomerName = customerName || guestInfo?.fullName || '';
     const resolvedCustomerEmail = customerEmail || guestInfo?.email || '';
     const resolvedPhone = phone || guestInfo?.phone || '';
-    const resolvedGuestCount = Number(guestCount || guestInfo?.guests || 1);
 
     const nowIso = new Date().toISOString();
     const sanitizedAddons = sanitizeAddons(addons || activeAddons || {});
@@ -148,7 +179,9 @@ export async function POST(request: Request) {
       paymentReference: resolvedTxRef,
       checkIn: checkIn ? new Date(checkIn).toISOString() : nowIso,
       checkOut: checkOut ? new Date(checkOut).toISOString() : nowIso,
-      totalNights: Number(totalNights) || 1,
+      totalNights: parsedNights,
+      guestCount: resolvedGuestCount,
+      pricePerNight: resolvedPricePerNight,
       baseRentTotal: parsedBaseRent,
       servicesTotal: parsedServices,
       grandTotal: parsedGrandTotal,
@@ -161,7 +194,6 @@ export async function POST(request: Request) {
       customerName: resolvedCustomerName,
       customerEmail: resolvedCustomerEmail,
       phone: resolvedPhone,
-      guestCount: resolvedGuestCount,
       apartmentTitle: apartmentTitle || '',
       listingId: listingId || '',
       dailyMealSelections: dailyMealSelections || parsedMeals || [],

@@ -15,75 +15,22 @@ import {
   Plus,
   Minus,
   Utensils,
-  ChefHat,
-  Truck,
   Calendar
 } from 'lucide-react';
 
-// --- FOOD MENU DATA CONSTANTS ---
-export const CHEF_MENU = [
-  // Soups (Per Litre)
-  { id: 'soup_egusi', name: 'Egusi Soup', category: 'soup', price: 40000 },
-  { id: 'soup_ogbono', name: 'Ogbono Soup', category: 'soup', price: 40000 },
-  { id: 'soup_edikang', name: 'Edikang Ikong Soup', category: 'soup', price: 44000 },
-  { id: 'soup_afang', name: 'Afang Soup', category: 'soup', price: 42000 },
-  { id: 'soup_oha', name: 'Oha Soup', category: 'soup', price: 42000 },
-  { id: 'soup_bitterleaf', name: 'Bitterleaf Soup', category: 'soup', price: 42000 },
-  { id: 'soup_ewedu_gbegiri', name: 'Ewedu & Gbegiri', category: 'soup', price: 36000 },
-  { id: 'soup_abula', name: 'Abula', category: 'soup', price: 38000 },
-  { id: 'soup_okra', name: 'Okra Soup', category: 'soup', price: 40000 },
-  { id: 'soup_banga', name: 'Banga Soup', category: 'soup', price: 44000 },
-  { id: 'soup_nsala', name: 'Ofe Nsala (White Soup)', category: 'soup', price: 46000 },
-  { id: 'soup_vegetable', name: 'Vegetable Soup', category: 'soup', price: 40000 },
-  { id: 'soup_fisherman', name: 'Fisherman Soup', category: 'soup', price: 56000 },
-  { id: 'soup_owerri', name: 'Ofe Owerri', category: 'soup', price: 46000 },
-  { id: 'soup_efo_riro', name: 'Efo Riro', category: 'soup', price: 40000 },
-  { id: 'soup_afia_efere', name: 'Afia Efere (White Soup)', category: 'soup', price: 46000 },
-  { id: 'soup_editan', name: 'Editan Soup', category: 'soup', price: 44000 },
-  { id: 'soup_atama', name: 'Atama Soup', category: 'soup', price: 44000 },
-  { id: 'soup_owho', name: 'Owho Soup', category: 'soup', price: 42000 },
-  { id: 'soup_ukodo', name: 'Ukodo (Yam Pepper Soup)', category: 'soup', price: 46000 },
+// --- PRICING & MENU HELPER FUNCTIONS (Matching KitchenSchedule) ---
+export const getMealUnitPrice = (mealName: string): number => {
+  const name = mealName.toLowerCase();
+  if (name.includes('jollof')) return 50000;
+  if (name.includes('fried rice')) return 50000;
+  if (name.includes('coconut rice')) return 50000;
+  if (name.includes('native rice')) return 45000;
+  if (name.includes('ofada')) return 55000;
+  if (name.includes('efo') || name.includes('egusi') || name.includes('ogbono') || name.includes('soup')) return 45000;
+  if (name.includes('pasta') || name.includes('spaghetti')) return 40000;
+  return 45000;
+};
 
-  // Lunch Specials
-  { id: 'lunch_abacha', name: 'Abacha (African Salad)', category: 'lunch', price: 14000 },
-  { id: 'lunch_nkwobi', name: 'Nkwobi', category: 'lunch', price: 24000 },
-  { id: 'lunch_isi_ewu', name: 'Isi Ewu', category: 'lunch', price: 30000 },
-  { id: 'lunch_ekpang', name: 'Ekpang Nkukwo', category: 'lunch', price: 20000 },
-  { id: 'lunch_bole_fish', name: 'Bole & Fish', category: 'lunch', price: 19000 },
-
-  // Rice Specialities (Per Litre)
-  { id: 'rice_jollof_chicken', name: 'Jollof Rice & Chicken', category: 'rice', price: 50000 },
-  { id: 'rice_white_stew', name: 'White Rice & Stew', category: 'rice', price: 40000 },
-  { id: 'rice_white_ofada', name: 'White Rice & Ofada Sauce', category: 'rice', price: 44000 },
-  { id: 'rice_ofada_ayamase', name: 'Ofada Rice & Ayamase', category: 'rice', price: 50000 },
-  { id: 'rice_coconut', name: 'Coconut Rice', category: 'rice', price: 44000 },
-  { id: 'rice_native_jollof', name: 'Native Jollof Rice', category: 'rice', price: 48000 },
-  { id: 'rice_fried_chicken', name: 'Fried Rice & Chicken', category: 'rice', price: 50000 },
-
-  // Chef Specials (Per Litre)
-  { id: 'chef_village_rice', name: 'Special Village Rice', category: 'chef_special', price: 50000 },
-  { id: 'chef_dirty_rice', name: 'Dirty Rice', category: 'chef_special', price: 40000 },
-  { id: 'chef_seafood_rice', name: 'Seafood Rice', category: 'chef_special', price: 60000 },
-  { id: 'chef_mixed_platters', name: 'Mixed Platters', category: 'chef_special', price: 70000 },
-
-  // Breakfast
-  { id: 'bf_asaro', name: 'Yam Porridge (Asaro)', category: 'breakfast', price: 40000 },
-  { id: 'bf_asaro_fish', name: 'Yam Porridge with Fish', category: 'breakfast', price: 50000 },
-  { id: 'bf_fried_yam_sauce', name: 'Fried Yam & Pepper Sauce', category: 'breakfast', price: 40000 },
-  { id: 'bf_boiled_yam_egg', name: 'Boiled Yam & Garden Egg Sauce', category: 'breakfast', price: 42000 },
-  { id: 'bf_plantain_porridge', name: 'Plantain Porridge', category: 'breakfast', price: 40000 },
-  { id: 'bf_fried_plantain_fish', name: 'Fried Plantain & Fish Sauce', category: 'breakfast', price: 50000 },
-  { id: 'bf_boiled_plantain_veg', name: 'Boiled Plantain & Vegetable Sauce', category: 'breakfast', price: 44000 },
-
-  // Dinner
-  { id: 'dn_beans_porridge', name: 'Beans Porridge', category: 'dinner', price: 40000 },
-  { id: 'dn_beans_plantain', name: 'Beans & Plantain', category: 'dinner', price: 44000 },
-  { id: 'dn_beans_yam', name: 'Beans & Yam', category: 'dinner', price: 44000 },
-  { id: 'dn_ewa_agoyin', name: 'Ewa Agoyin with Special Sauce', category: 'dinner', price: 46000 },
-  { id: 'dn_moi_moi_stew', name: 'Moi Moi & Stew', category: 'dinner', price: 40000 },
-];
-
-// Exported explicitly so external files (like checkout) can import it without editor errors
 export const PROTEIN_OPTIONS = [
   { id: 'p_beef', name: 'Beef', price: 6000 },
   { id: 'p_goat', name: 'Goat Meat', price: 8000 },
@@ -110,12 +57,66 @@ export const SWALLOW_OPTIONS = [
 ];
 
 export const MENU_CATEGORIES = [
-  { id: 'soup', label: 'Soups' },
-  { id: 'lunch', label: 'Lunch Specials' },
-  { id: 'rice', label: 'Rice Specialties' },
-  { id: 'chef_special', label: '⭐ Chef Specials' },
-  { id: 'breakfast', label: 'Breakfast' },
-  { id: 'dinner', label: 'Dinner' }
+  { id: 'soups', label: 'Soups' },
+  { id: 'meals', label: 'Meals' }
+];
+
+export const KITCHEN_MENU = [
+  // Soups (Per Litre)
+  { id: 'soup_egusi', name: 'Egusi Soup', category: 'soups' },
+  { id: 'soup_ogbono', name: 'Ogbono Soup', category: 'soups' },
+  { id: 'soup_edikang', name: 'Edikang Ikong Soup', category: 'soups' },
+  { id: 'soup_afang', name: 'Afang Soup', category: 'soups' },
+  { id: 'soup_oha', name: 'Oha Soup', category: 'soups' },
+  { id: 'soup_bitterleaf', name: 'Bitterleaf Soup', category: 'soups' },
+  { id: 'soup_ewedu_gbegiri', name: 'Ewedu & Gbegiri', category: 'soups' },
+  { id: 'soup_abula', name: 'Abula', category: 'soups' },
+  { id: 'soup_okra', name: 'Okra Soup', category: 'soups' },
+  { id: 'soup_banga', name: 'Banga Soup', category: 'soups' },
+  { id: 'soup_nsala', name: 'Ofe Nsala (White Soup)', category: 'soups' },
+  { id: 'soup_vegetable', name: 'Vegetable Soup', category: 'soups' },
+  { id: 'soup_fisherman', name: 'Fisherman Soup', category: 'soups' },
+  { id: 'soup_owerri', name: 'Ofe Owerri', category: 'soups' },
+  { id: 'soup_efo_riro', name: 'Efo Riro', category: 'soups' },
+  { id: 'soup_afia_efere', name: 'Afia Efere (White Soup)', category: 'soups' },
+  { id: 'soup_editan', name: 'Editan Soup', category: 'soups' },
+  { id: 'soup_atama', name: 'Atama Soup', category: 'soups' },
+  { id: 'soup_owho', name: 'Owho Soup', category: 'soups' },
+  { id: 'soup_ukodo', name: 'Ukodo (Yam Pepper Soup)', category: 'soups' },
+
+  // Meals & Specialties (Per Litre)
+  { id: 'lunch_abacha', name: 'Abacha (African Salad)', category: 'meals' },
+  { id: 'lunch_nkwobi', name: 'Nkwobi', category: 'meals' },
+  { id: 'lunch_isi_ewu', name: 'Isi Ewu', category: 'meals' },
+  { id: 'lunch_ekpang', name: 'Ekpang Nkukwo', category: 'meals' },
+  { id: 'lunch_bole_fish', name: 'Bole & Fish', category: 'meals' },
+
+  { id: 'rice_jollof_chicken', name: 'Jollof Rice & Chicken', category: 'meals' },
+  { id: 'rice_white_stew', name: 'White Rice & Stew', category: 'meals' },
+  { id: 'rice_white_ofada', name: 'White Rice & Ofada Sauce', category: 'meals' },
+  { id: 'rice_ofada_ayamase', name: 'Ofada Rice & Ayamase', category: 'meals' },
+  { id: 'rice_coconut', name: 'Coconut Rice', category: 'meals' },
+  { id: 'rice_native_jollof', name: 'Native Jollof Rice', category: 'meals' },
+  { id: 'rice_fried_chicken', name: 'Fried Rice & Chicken', category: 'meals' },
+
+  { id: 'chef_village_rice', name: 'Special Village Rice', category: 'meals' },
+  { id: 'chef_dirty_rice', name: 'Dirty Rice', category: 'meals' },
+  { id: 'chef_seafood_rice', name: 'Seafood Rice', category: 'meals' },
+  { id: 'chef_mixed_platters', name: 'Mixed Platters', category: 'meals' },
+
+  { id: 'bf_asaro', name: 'Yam Porridge (Asaro)', category: 'meals' },
+  { id: 'bf_asaro_fish', name: 'Yam Porridge with Fish', category: 'meals' },
+  { id: 'bf_fried_yam_sauce', name: 'Fried Yam & Pepper Sauce', category: 'meals' },
+  { id: 'bf_boiled_yam_egg', name: 'Boiled Yam & Garden Egg Sauce', category: 'meals' },
+  { id: 'bf_plantain_porridge', name: 'Plantain Porridge', category: 'meals' },
+  { id: 'bf_fried_plantain_fish', name: 'Fried Plantain & Fish Sauce', category: 'meals' },
+  { id: 'bf_boiled_plantain_veg', name: 'Boiled Plantain & Vegetable Sauce', category: 'meals' },
+
+  { id: 'dn_beans_porridge', name: 'Beans Porridge', category: 'meals' },
+  { id: 'dn_beans_plantain', name: 'Beans & Plantain', category: 'meals' },
+  { id: 'dn_beans_yam', name: 'Beans & Yam', category: 'meals' },
+  { id: 'dn_ewa_agoyin', name: 'Ewa Agoyin with Special Sauce', category: 'meals' },
+  { id: 'dn_moi_moi_stew', name: 'Moi Moi & Stew', category: 'meals' },
 ];
 
 interface Props {
@@ -157,16 +158,14 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
   const [shopperActive, setShopperActive] = useState(false);
   const [shopperCount, setShopperCount] = useState(1);
 
-  // --- MEAL & CHEF STATES ---
+  // --- MEAL STATES ---
   const [mealsActive, setMealsActive] = useState(false);
   const [selectedDayTab, setSelectedDayTab] = useState(1);
-  const [selectedCategoryTab, setSelectedCategoryTab] = useState<string>('soup');
+  const [selectedCategoryTab, setSelectedCategoryTab] = useState<string>('soups');
   
-  // Track open dropdown accordions per meal ID
   const [openMealDropdowns, setOpenMealDropdowns] = useState<Record<string, boolean>>({});
 
   const [dailyMealSelections, setDailyMealSelections] = useState<Record<number, {
-    preparationType: 'chef' | 'delivery';
     items: Record<string, { qty: number; swallow?: string; proteins: Record<string, number> }>;
   }>>({});
 
@@ -178,7 +177,7 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
 
   const handleMealItemChange = (day: number, itemId: string, delta: number) => {
     setDailyMealSelections(prev => {
-      const currentDay = prev[day] || { preparationType: 'chef', items: {} };
+      const currentDay = prev[day] || { items: {} };
       const currentItem = currentDay.items[itemId] || { qty: 0, swallow: 'Eba', proteins: {} };
       const nextQty = Math.max(0, currentItem.qty + delta);
 
@@ -196,7 +195,6 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
       return {
         ...prev,
         [day]: { 
-          ...currentDay, 
           items: updatedItems
         }
       };
@@ -209,7 +207,7 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
 
   const handleSwallowChange = (day: number, itemId: string, swallow: string) => {
     setDailyMealSelections(prev => {
-      const currentDay = prev[day] || { preparationType: 'chef', items: {} };
+      const currentDay = prev[day] || { items: {} };
       const currentItem = currentDay.items[itemId];
 
       if (!currentItem || currentItem.qty <= 0) return prev;
@@ -232,7 +230,7 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
 
   const handleProteinChange = (day: number, itemId: string, proteinId: string, delta: number) => {
     setDailyMealSelections(prev => {
-      const currentDay = prev[day] || { preparationType: 'chef', items: {} };
+      const currentDay = prev[day] || { items: {} };
       const currentItem = currentDay.items[itemId];
 
       if (!currentItem || currentItem.qty <= 0) return prev;
@@ -265,16 +263,6 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
 
   const toggleDropdown = (itemId: string) => {
     setOpenMealDropdowns(prev => ({ ...prev, [itemId]: !prev[itemId] }));
-  };
-
-  const handlePrepTypeChange = (day: number, type: 'chef' | 'delivery') => {
-    setDailyMealSelections(prev => {
-      const currentDay = prev[day] || { preparationType: 'chef', items: {} };
-      return {
-        ...prev,
-        [day]: { ...currentDay, preparationType: type }
-      };
-    });
   };
 
   // --- PRICING & SUMMARY CALCULATIONS ---
@@ -338,14 +326,11 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
     if (mealsActive) {
       Object.entries(dailyMealSelections).forEach(([dayNum, dayData]) => {
         if (parseInt(dayNum) <= nights) {
-          const isChefSelected = dayData.preparationType === 'chef';
-
           Object.entries(dayData.items || {}).forEach(([itemId, itemData]) => {
-            const menuObj = CHEF_MENU.find(m => m.id === itemId);
+            const menuObj = KITCHEN_MENU.find(m => m.id === itemId);
             if (menuObj && itemData.qty > 0) {
-              const basePrice = menuObj.price;
-              const chefAddon = isChefSelected ? 20000 : 0;
-              totalMealPrice += (basePrice + chefAddon) * itemData.qty;
+              const basePrice = getMealUnitPrice(menuObj.name);
+              totalMealPrice += basePrice * itemData.qty;
 
               Object.entries(itemData.proteins || {}).forEach(([protId, pQty]) => {
                 const protObj = PROTEIN_OPTIONS.find(p => p.id === protId);
@@ -424,8 +409,8 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
     calculations.totalConciergePrice, calculations.totalMealPrice, calculations.grandTotal
   ]);
 
-  const activeDayData = dailyMealSelections[selectedDayTab] || { preparationType: 'chef', items: {} };
-  const filteredCategoryItems = CHEF_MENU.filter(m => m.category === selectedCategoryTab);
+  const activeDayData = dailyMealSelections[selectedDayTab] || { items: {} };
+  const filteredCategoryItems = KITCHEN_MENU.filter(m => m.category === selectedCategoryTab);
 
   return (
     <div className="w-full space-y-6 text-gray-100 max-w-4xl mx-auto">
@@ -434,11 +419,11 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
           <Sparkles className="w-5 h-5 text-cyan-400" /> Concierge & Dining Services
         </h2>
         <p className="text-xs md:text-sm text-gray-400 mt-1">
-          Customize your stay with private culinary services, luxury add-ons, and local security.
+          Customize your stay with kitchen schedule meal orders and executive concierge add-ons.
         </p>
       </div>
 
-      {/* --- FOOD & CHEF SELECTION MODULE --- */}
+      {/* --- KITCHEN SCHEDULE & DINING SELECTION MODULE --- */}
       <div className={`p-4 rounded-xl border transition-all ${mealsActive ? 'bg-gray-900/90 border-amber-500/50 ring-1 ring-amber-500/20' : 'bg-gray-950/60 border-gray-800'}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -446,8 +431,8 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
               <Utensils className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-semibold text-sm md:text-base text-white">Daily Meals & Dining (Per Litre)</h3>
-              <p className="text-xs text-gray-400">Select fresh local dishes, soups (per litre), and dining preferences per day</p>
+              <h3 className="font-semibold text-sm md:text-base text-white">Kitchen Schedule & Meals (Per Litre)</h3>
+              <p className="text-xs text-gray-400">Select dishes, soups, and protein add-ons per day</p>
             </div>
           </div>
           <input
@@ -478,35 +463,6 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
               ))}
             </div>
 
-            {/* Preparation Option Switch */}
-            <div className="bg-gray-950 p-3 rounded-lg border border-gray-800 flex flex-col sm:flex-row items-center justify-between gap-3">
-              <span className="text-xs text-gray-300 font-medium">Preparation Option for Day {selectedDayTab}:</span>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => handlePrepTypeChange(selectedDayTab, 'chef')}
-                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 border transition-all ${
-                    activeDayData.preparationType === 'chef'
-                      ? 'bg-amber-950/60 border-amber-500 text-amber-300'
-                      : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-gray-200'
-                  }`}
-                >
-                  <ChefHat className="w-4 h-4 text-amber-400" /> In-House Chef 
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handlePrepTypeChange(selectedDayTab, 'delivery')}
-                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 border transition-all ${
-                    activeDayData.preparationType === 'delivery'
-                      ? 'bg-amber-950/60 border-amber-500 text-amber-300'
-                      : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-gray-200'
-                  }`}
-                >
-                  <Truck className="w-4 h-4 text-amber-400" /> Express Food Delivery
-                </button>
-              </div>
-            </div>
-
             {/* Food Menu Category Tabs */}
             <div className="flex items-center gap-2 overflow-x-auto border-b border-gray-800/80 pb-2 scrollbar-thin">
               {MENU_CATEGORIES.map((cat) => (
@@ -531,9 +487,9 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
                 {filteredCategoryItems.map((item) => {
                   const itemData = activeDayData.items[item.id] || { qty: 0, swallow: 'Eba', proteins: {} };
                   const qty = itemData.qty;
-                  const effectivePrice = activeDayData.preparationType === 'chef' ? item.price + 20000 : item.price;
+                  const unitPrice = getMealUnitPrice(item.name);
                   const isDropdownOpen = !!openMealDropdowns[item.id] && qty > 0;
-                  const isSoup = item.category === 'soup';
+                  const isSoup = item.category === 'soups';
 
                   return (
                     <div key={item.id} className="rounded-lg bg-gray-900/60 border border-gray-800 text-xs overflow-hidden transition-all">
@@ -541,7 +497,7 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
                         <div className="pr-2 flex-1">
                           <span className="font-medium text-gray-200 block">{item.name}</span>
                           <span className="text-[10px] text-amber-400/90 font-mono">
-                            ₦{effectivePrice.toLocaleString()} / Litre {activeDayData.preparationType === 'chef' ? '(incl. ₦20k Chef Fee)' : ''}
+                            ₦{unitPrice.toLocaleString()} / Litre
                           </span>
                         </div>
 
@@ -661,7 +617,7 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
             </div>
 
             <div className="text-right text-xs font-mono text-amber-400 border-t border-gray-800 pt-2">
-              Total Meal Subtotal: ₦{calculations.totalMealPrice.toLocaleString()}
+              Total Kitchen Order Subtotal: ₦{calculations.totalMealPrice.toLocaleString()}
             </div>
           </div>
         )}
@@ -1005,7 +961,7 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
       <div className="p-4 rounded-xl bg-gradient-to-r from-gray-900 via-gray-950 to-gray-900 border border-gray-800 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs border-b border-gray-800 pb-3">
           <div className="flex justify-between items-center bg-gray-900/60 p-2.5 rounded-lg border border-gray-800">
-            <span className="text-gray-400 flex items-center gap-1.5"><Utensils className="w-3.5 h-3.5 text-amber-400" /> Total Meals & Chef:</span>
+            <span className="text-gray-400 flex items-center gap-1.5"><Utensils className="w-3.5 h-3.5 text-amber-400" /> Total Kitchen Selections:</span>
             <span className="font-mono font-bold text-amber-400">₦{calculations.totalMealPrice.toLocaleString()}</span>
           </div>
           <div className="flex justify-between items-center bg-gray-900/60 p-2.5 rounded-lg border border-gray-800">
@@ -1017,7 +973,7 @@ export default function ConciergeBooking({ nights = 1, onChange }: Props) {
         <div className="flex flex-col sm:flex-row items-center justify-between gap-2 pt-1">
           <span className="text-xs text-gray-400 flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            Prices calculated per day and categorized for checkout & admin tabs.
+            Prices calculated per day and categorized for checkout & admin kitchen schedule logs.
           </span>
           <div className="text-right w-full sm:w-auto">
             <span className="text-xs text-gray-400 block">Grand Total</span>
