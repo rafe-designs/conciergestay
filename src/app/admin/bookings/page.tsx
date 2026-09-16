@@ -121,9 +121,20 @@ const getDishUnitPrice = (dishName: string): number => {
   return 45000;
 };
 
+// Kitchen parsing and cost calculation
 const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalCost: number } => {
+  const dbStoredTotal = extractNumber(
+    booking?.servicesTotal || 
+    booking?.servicesCut || 
+    booking?.kitchenTotal || 
+    booking?.mealTotal || 
+    booking?.mealsPrice || 
+    booking?.foodTotal ||
+    booking?.kitchenRevenue || 
+    booking?.mealsRevenue
+  );
+
   const addons = parseJson(booking?.addons);
-  
   const mealsObj = parseJson(
     booking?.dailyMealSelections || 
     booking?.meals || 
@@ -133,12 +144,6 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
     booking?.kitchenSelections
   );
   const soupsObj = parseJson(booking?.soups || addons?.soups);
-
-  const explicitTotal = extractNumber(
-    booking?.kitchenTotal || booking?.mealTotal || booking?.mealsPrice || booking?.foodTotal ||
-    mealsObj?.totalPrice || mealsObj?.grandTotal || mealsObj?.total || addons?.kitchenTotal || addons?.foodTotal ||
-    booking?.kitchenRevenue || booking?.mealsRevenue
-  );
 
   const itemNames: string[] = [];
   let calculatedCost = 0;
@@ -165,7 +170,6 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
       : 'Kitchen Meal Selection';
 
     const finalDishPrice = baseDishPrice > 0 ? baseDishPrice : getDishUnitPrice(dishName);
-
     const liters = dishNode.liters ? Number(dishNode.liters) : (dishNode.quantity ? Number(dishNode.quantity) : (dishNode.qty ? Number(dishNode.qty) : 1));
     let baseDishSubtotal = finalDishPrice * (liters > 0 ? liters : 1);
 
@@ -291,7 +295,7 @@ const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalC
     traverseAndCollect(addons?.kitchen);
   }
 
-  const finalTotalCost = explicitTotal > 0 ? explicitTotal : (calculatedCost > 0 ? calculatedCost : 0);
+  const finalTotalCost = dbStoredTotal > 0 ? dbStoredTotal : (calculatedCost > 0 ? calculatedCost : 0);
 
   if (itemNames.length === 0 && finalTotalCost > 0) {
     itemNames.push(`Kitchen Package / Order - ₦${finalTotalCost.toLocaleString()}`);
@@ -330,15 +334,27 @@ const CONCIERGE_CATALOGUE: Record<DepartmentKey, { baseRate: number; calculate: 
     }
   },
   chauffeur: {
-    baseRate: 25000,
+    baseRate: 150000,
     calculate: (booking: Booking, addons: any, nights: number) => {
       const cObj = addons?.chauffeur || addons?.chauffeurService || booking?.chauffeur;
       if (!cObj || cObj === 'no' || cObj === false) return { cost: 0, lines: [] };
 
-      const cStr = typeof cObj === 'string' ? cObj : (cObj.car || cObj.vehicle || cObj.type || '');
-      const isLuxury = cStr.toLowerCase().includes('luxury');
-      const rate = isLuxury ? 350000 : 25000;
-      const cost = rate * nights;
+      const explicitPrice = extractNumber(typeof cObj === 'object' ? (cObj.price || cObj.amount || cObj.cost || cObj.total) : 0);
+      const cStr = typeof cObj === 'string' ? cObj : (cObj.car || cObj.vehicle || cObj.type || cObj.name || '');
+      const cLower = cStr.toLowerCase();
+
+      // Chauffeur rates: Executive Commuter (#150,000), Executive Sedan (#250,000), Luxury Sedan (#350,000)
+      let rate = 150000;
+      if (cLower.includes('luxury')) {
+        rate = 350000;
+      } else if (cLower.includes('sedan') || cLower.includes('executive sedan')) {
+        rate = 250000;
+      } else if (cLower.includes('commuter') || cLower.includes('executive commuter')) {
+        rate = 150000;
+      }
+
+      const unitRate = explicitPrice > 0 ? explicitPrice : rate;
+      const cost = unitRate * nights;
       return { cost, lines: [`Chauffeur: ${cStr.toUpperCase()} (${nights} Day(s)) - ₦${cost.toLocaleString()}`] };
     }
   },
@@ -759,7 +775,8 @@ function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQue
       </div>
 
       <div className="pt-4 border-t border-gray-800">
-        <h3 className="text-sm font-bold uppercase tracking-wider text-gray-300 mb-4">Kitchen & Operational Schedule</h3>
+        <h3 className="text-sm font-bold uppercase tracking-wider text-gray-300 mb-4">Complete Client Order Overview</h3>
+        {/* showAddons={true} ensures entire order per client is displayed in overview */}
         <KitchenSchedule bookings={filteredBookings} showAddons={true} />
       </div>
     </div>
@@ -854,6 +871,34 @@ function DepartmentSection({ config, bookings, revenue, selectedDate }: { config
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
+
+  // If this is the Kitchen department, render the KitchenSchedule component directly with showAddons={false} for strict meals-only isolation
+  if (config.id === 'kitchen') {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-gray-950 p-4 rounded-xl border border-gray-800 gap-4">
+          <div>
+            <h2 className={`text-sm font-extrabold uppercase tracking-wider ${config.color}`}>{config.name} Logs & Schedule</h2>
+            <p className="text-[11px] text-gray-400">Download or export operational assignments for department head distribution.</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <span className="text-[11px] text-gray-400 block">Department Revenue</span>
+              <span className={`text-base font-extrabold font-mono ${config.color}`}>₦{revenue.toLocaleString()}</span>
+            </div>
+            <button 
+              onClick={handleDownloadSchedule}
+              className="px-3.5 py-2 text-xs font-bold rounded-lg bg-cyan-950 border border-cyan-700 hover:bg-cyan-900 text-cyan-300 transition cursor-pointer flex items-center gap-1.5 shadow-md"
+            >
+              📥 Download Schedule
+            </button>
+          </div>
+        </div>
+        {/* showAddons={false} ensures kitchen departmental tab shows meals only */}
+        <KitchenSchedule bookings={bookings} showAddons={false} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
