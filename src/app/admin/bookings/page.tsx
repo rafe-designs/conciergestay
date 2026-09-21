@@ -65,6 +65,18 @@ const DEPARTMENT_CONFIGS: DeptConfig[] = [
   { id: 'shopper', label: '🛒 Personal Shopper', name: 'Personal Shopper', color: 'text-pink-400', barBg: 'bg-pink-500', keywords: ['shopper'] }
 ];
 
+const normalizeKitchenBookings = (items: Booking[]) =>
+  items.map((booking) => ({
+    ...booking,
+    id: booking.id ?? booking.reference ?? booking.paymentReference ?? `booking-${Math.random().toString(36).slice(2, 10)}`,
+    listingId: booking.listingId ?? 'N/A',
+    checkIn: booking.checkIn ?? '',
+    checkOut: booking.checkOut ?? '',
+    status: booking.status ?? 'Confirmed',
+    customerName: booking.customerName ?? booking.guestName ?? 'Guest',
+    phone: booking.phone ?? booking.phoneNumber ?? '',
+  }));
+
 // --- UTILITY FUNCTIONS ---
 const parseJson = (data: any): any => {
   if (!data) return {};
