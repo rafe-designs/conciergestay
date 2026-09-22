@@ -355,7 +355,6 @@ const CONCIERGE_CATALOGUE: Record<DepartmentKey, { baseRate: number; calculate: 
       const cStr = typeof cObj === 'string' ? cObj : (cObj.car || cObj.vehicle || cObj.type || cObj.name || '');
       const cLower = cStr.toLowerCase();
 
-      // Chauffeur rates: Executive Commuter (#150,000), Executive Sedan (#250,000), Luxury Sedan (#350,000)
       let rate = 150000;
       if (cLower.includes('luxury')) {
         rate = 350000;
@@ -788,7 +787,6 @@ function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQue
 
       <div className="pt-4 border-t border-gray-800">
         <h3 className="text-sm font-bold uppercase tracking-wider text-gray-300 mb-4">Complete Client Order Overview</h3>
-        {/* showAddons={true} ensures entire order per client is displayed in overview */}
         <KitchenSchedule bookings={filteredBookings} showAddons={true} />
       </div>
     </div>
@@ -884,7 +882,6 @@ function DepartmentSection({ config, bookings, revenue, selectedDate }: { config
     URL.revokeObjectURL(url);
   };
 
-  // If this is the Kitchen department, render the KitchenSchedule component directly with showAddons={false} for strict meals-only isolation
   if (config.id === 'kitchen') {
     return (
       <div className="space-y-6">
@@ -906,7 +903,6 @@ function DepartmentSection({ config, bookings, revenue, selectedDate }: { config
             </button>
           </div>
         </div>
-        {/* showAddons={false} ensures kitchen departmental tab shows meals only */}
         <KitchenSchedule bookings={bookings} showAddons={false} />
       </div>
     );

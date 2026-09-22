@@ -268,7 +268,6 @@ const parseAddonsIntoStructuredItems = (addons: any, nights: number = 1): Proces
     const chaufStr = typeof parsed.chauffeur === 'string' ? parsed.chauffeur : (chaufObj.car || chaufObj.vehicle || chaufObj.type || chaufObj.name || '');
     const cLower = chaufStr.toLowerCase();
 
-    // Updated Chauffeur rates: Executive Commuter (#150,000), Executive Sedan (#250,000), Luxury Sedan (#350,000)
     let rate = 150000;
     if (cLower.includes('luxury')) {
       rate = 350000;
@@ -354,7 +353,6 @@ export default function KitchenSchedule({ bookings, showAddons = false }: Kitche
 
   return (
     <div className="space-y-6">
-      {/* Controls Bar: Search & Print */}
       <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 bg-gray-900/80 p-4 rounded-xl border border-gray-800 print:hidden">
         <div className="relative flex-1">
           <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400 text-xs">🔍</span>

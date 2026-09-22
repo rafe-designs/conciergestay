@@ -240,6 +240,24 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     });
   };
 
+  const updateSoupLiters = (date: string, soupId: string, liters: number) => {
+    const cappedLiters = Math.min(10, Math.max(0, liters));
+    const daySoups = dailySoups[date] || {};
+    const current = daySoups[soupId] || { liters: 0, swallow: 'Amala', proteins: [] };
+    const updatedDaySoups = { ...daySoups };
+
+    if (cappedLiters === 0) {
+      delete updatedDaySoups[soupId];
+    } else {
+      updatedDaySoups[soupId] = { ...current, liters: cappedLiters, proteins: current.proteins || [] };
+    }
+
+    setDailySoups({
+      ...dailySoups,
+      [date]: updatedDaySoups,
+    });
+  };
+
   const toggleMealProtein = (date: string, mealId: string, proteinId: string) => {
     const dayMeals = dailyMeals[date] || {};
     const currentData = dayMeals[mealId];
@@ -588,23 +606,36 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                           key={item.id}
                           className="bg-[#060b13] border border-slate-800/80 rounded-xl p-4 space-y-3"
                         >
-                          <div className="flex justify-between items-center">
+                          {/* Responsive flex container stacking on mobile */}
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div>
                               <p className="text-sm font-semibold text-slate-200">{item.name}</p>
                               <p className="text-xs text-amber-400 mt-1 font-semibold">
                                 ₦{dynamicPrice.toLocaleString()} / Liter
                               </p>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center justify-between sm:justify-end gap-2">
                               <label className="text-[11px] text-slate-400 uppercase">Liters (Max 10)</label>
-                              <input
-                                type="number"
-                                min="0"
-                                max="10"
-                                value={currentData.liters}
-                                onChange={(e) => updateMealLiters(activeDay, item.id, parseInt(e.target.value) || 0)}
-                                className="w-14 bg-[#0b121e] border border-slate-800 rounded-lg p-2 text-center text-xs text-amber-400 focus:outline-none font-semibold"
-                              />
+                              {/* Touch-Friendly Stepper */}
+                              <div className="flex items-center gap-1 bg-[#0b121e] border border-slate-800 rounded-lg p-1">
+                                <button
+                                  type="button"
+                                  onClick={() => updateMealLiters(activeDay, item.id, currentData.liters - 1)}
+                                  className="w-8 h-8 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded-md font-bold text-sm flex items-center justify-center transition-colors"
+                                >
+                                  -
+                                </button>
+                                <span className="w-8 text-center text-xs text-amber-400 font-semibold">
+                                  {currentData.liters}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => updateMealLiters(activeDay, item.id, currentData.liters + 1)}
+                                  className="w-8 h-8 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded-md font-bold text-sm flex items-center justify-center transition-colors"
+                                >
+                                  +
+                                </button>
+                              </div>
                             </div>
                           </div>
 
@@ -621,14 +652,14 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                                   return (
                                     <div
                                       key={p.id}
-                                      className="flex items-center justify-between bg-[#0b121e] p-2 rounded-lg border border-slate-800/60"
+                                      className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-[#0b121e] p-2.5 rounded-lg border border-slate-800/60"
                                     >
                                       <label className="flex items-center gap-2 cursor-pointer">
                                         <input
                                           type="checkbox"
                                           checked={isChecked}
                                           onChange={() => toggleMealProtein(activeDay, item.id, p.id)}
-                                          className="w-3 h-3 accent-yellow-400 rounded"
+                                          className="w-4 h-4 accent-yellow-400 rounded"
                                         />
                                         <span className="text-xs text-slate-300">
                                           {p.name}{' '}
@@ -637,23 +668,42 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                                       </label>
 
                                       {isChecked && (
-                                        <div className="flex items-center gap-1">
-                                          <span className="text-[10px] text-slate-400 uppercase">Pcs:</span>
-                                          <input
-                                            type="number"
-                                            min="1"
-                                            max="20"
-                                            value={selectedProtein.qty}
-                                            onChange={(e) =>
-                                              updateMealProteinQty(
-                                                activeDay,
-                                                item.id,
-                                                p.id,
-                                                parseInt(e.target.value) || 1
-                                              )
-                                            }
-                                            className="w-12 bg-[#060b13] border border-yellow-500/40 rounded p-1 text-center text-xs text-yellow-300 focus:outline-none"
-                                          />
+                                        <div className="flex items-center justify-between w-full sm:w-auto gap-2 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-800/40">
+                                          <span className="text-[10px] text-slate-400 uppercase">Qty (Pcs):</span>
+                                          {/* Protein Stepper */}
+                                          <div className="flex items-center gap-1">
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                updateMealProteinQty(
+                                                  activeDay,
+                                                  item.id,
+                                                  p.id,
+                                                  (selectedProtein.qty || 1) - 1
+                                                )
+                                              }
+                                              className="w-7 h-7 bg-[#060b13] border border-yellow-500/40 text-yellow-300 rounded font-bold text-xs flex items-center justify-center"
+                                            >
+                                              -
+                                            </button>
+                                            <span className="w-6 text-center text-xs text-yellow-300 font-semibold">
+                                              {selectedProtein.qty}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                updateMealProteinQty(
+                                                  activeDay,
+                                                  item.id,
+                                                  p.id,
+                                                  (selectedProtein.qty || 1) + 1
+                                                )
+                                              }
+                                              className="w-7 h-7 bg-[#060b13] border border-yellow-500/40 text-yellow-300 rounded font-bold text-xs flex items-center justify-center"
+                                            >
+                                              +
+                                            </button>
+                                          </div>
                                         </div>
                                       )}
                                     </div>
@@ -673,45 +723,42 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
                       return (
                         <div key={soup.id} className="bg-[#060b13] border border-slate-800/80 rounded-xl p-4 space-y-3">
-                          <div className="flex justify-between items-center">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div>
                               <p className="text-sm font-semibold text-slate-200">{soup.name}</p>
                               <p className="text-xs text-yellow-400 mt-1 font-semibold">
-                                ₦{dynamicPrice.toLocaleString()} / Portion
+                                ₦{dynamicPrice.toLocaleString()} / Liter
                               </p>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center justify-between sm:justify-end gap-2">
                               <label className="text-[11px] text-slate-400 uppercase">Qty (Max 10)</label>
-                              <input
-                                type="number"
-                                min="0"
-                                max="10"
-                                value={current.liters}
-                                onChange={(e) => {
-                                  const liters = Math.min(10, Math.max(0, parseInt(e.target.value) || 0));
-                                  const daySoups = dailySoups[activeDay] || {};
-                                  const updatedDaySoups = { ...daySoups };
-
-                                  if (liters === 0) {
-                                    delete updatedDaySoups[soup.id];
-                                  } else {
-                                    updatedDaySoups[soup.id] = { ...current, liters, proteins: current.proteins || [] };
-                                  }
-
-                                  setDailySoups({
-                                    ...dailySoups,
-                                    [activeDay]: updatedDaySoups,
-                                  });
-                                }}
-                                className="w-14 bg-[#0b121e] border border-slate-800 rounded-lg p-2 text-center text-xs text-amber-400 focus:outline-none font-semibold"
-                              />
+                              {/* Soup Stepper */}
+                              <div className="flex items-center gap-1 bg-[#0b121e] border border-slate-800 rounded-lg p-1">
+                                <button
+                                  type="button"
+                                  onClick={() => updateSoupLiters(activeDay, soup.id, current.liters - 1)}
+                                  className="w-8 h-8 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded-md font-bold text-sm flex items-center justify-center transition-colors"
+                                >
+                                  -
+                                </button>
+                                <span className="w-8 text-center text-xs text-amber-400 font-semibold">
+                                  {current.liters}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => updateSoupLiters(activeDay, soup.id, current.liters + 1)}
+                                  className="w-8 h-8 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded-md font-bold text-sm flex items-center justify-center transition-colors"
+                                >
+                                  +
+                                </button>
+                              </div>
                             </div>
                           </div>
 
                           {isSelected && (
                             <div className="space-y-3 pt-2 border-t border-slate-800/60">
                               {activeTab === 'soups' && (
-                                <div className="flex items-center gap-3">
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                                   <span className="text-xs text-yellow-400 font-medium">Select Swallow Choice:</span>
                                   <select
                                     value={current.swallow}
@@ -725,7 +772,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                                         },
                                       });
                                     }}
-                                    className="bg-[#0b121e] border border-yellow-500/40 rounded-lg p-2 text-xs text-yellow-400 focus:outline-none"
+                                    className="bg-[#0b121e] border border-yellow-500/40 rounded-lg p-2.5 text-xs text-yellow-400 focus:outline-none"
                                   >
                                     {SWALLOW_OPTIONS.map((sw) => (
                                       <option key={sw} value={sw}>
@@ -748,14 +795,14 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                                     return (
                                       <div
                                         key={p.id}
-                                        className="flex items-center justify-between bg-[#0b121e] p-2 rounded-lg border border-slate-800/60"
+                                        className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-[#0b121e] p-2.5 rounded-lg border border-slate-800/60"
                                       >
                                         <label className="flex items-center gap-2 cursor-pointer">
                                           <input
                                             type="checkbox"
                                             checked={isChecked}
                                             onChange={() => toggleSoupProtein(activeDay, soup.id, p.id)}
-                                            className="w-3 h-3 accent-yellow-400 rounded"
+                                            className="w-4 h-4 accent-yellow-400 rounded"
                                           />
                                           <span className="text-xs text-slate-300">
                                             {p.name}{' '}
@@ -764,23 +811,42 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                                         </label>
 
                                         {isChecked && (
-                                          <div className="flex items-center gap-1">
-                                            <span className="text-[10px] text-slate-400 uppercase">Pcs:</span>
-                                            <input
-                                              type="number"
-                                              min="1"
-                                              max="20"
-                                              value={selectedProtein.qty}
-                                              onChange={(e) =>
-                                                updateSoupProteinQty(
-                                                  activeDay,
-                                                  soup.id,
-                                                  p.id,
-                                                  parseInt(e.target.value) || 1
-                                                )
-                                              }
-                                              className="w-12 bg-[#060b13] border border-yellow-500/40 rounded p-1 text-center text-xs text-yellow-300 focus:outline-none"
-                                            />
+                                          <div className="flex items-center justify-between w-full sm:w-auto gap-2 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-800/40">
+                                            <span className="text-[10px] text-slate-400 uppercase">Qty (Pcs):</span>
+                                            {/* Soup Protein Stepper */}
+                                            <div className="flex items-center gap-1">
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  updateSoupProteinQty(
+                                                    activeDay,
+                                                    soup.id,
+                                                    p.id,
+                                                    (selectedProtein.qty || 1) - 1
+                                                  )
+                                                }
+                                                className="w-7 h-7 bg-[#060b13] border border-yellow-500/40 text-yellow-300 rounded font-bold text-xs flex items-center justify-center"
+                                              >
+                                                -
+                                              </button>
+                                              <span className="w-6 text-center text-xs text-yellow-300 font-semibold">
+                                                {selectedProtein.qty}
+                                              </span>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  updateSoupProteinQty(
+                                                    activeDay,
+                                                    soup.id,
+                                                    p.id,
+                                                    (selectedProtein.qty || 1) + 1
+                                                  )
+                                                }
+                                                className="w-7 h-7 bg-[#060b13] border border-yellow-500/40 text-yellow-300 rounded font-bold text-xs flex items-center justify-center"
+                                              >
+                                                +
+                                              </button>
+                                            </div>
                                           </div>
                                         )}
                                       </div>
@@ -1116,13 +1182,26 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
             <div>
               <label className="text-xs uppercase font-semibold text-slate-400 block mb-2">NUMBER OF GUESTS</label>
-              <input
-                type="number"
-                min="1"
-                value={guests}
-                onChange={(e) => setGuests(Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-full bg-[#060b13] border border-slate-800 rounded-xl p-3.5 text-sm text-slate-200 focus:outline-none focus:border-cyan-400"
-              />
+              {/* Touch-Friendly Guest Stepper */}
+              <div className="flex items-center justify-between bg-[#060b13] border border-slate-800 rounded-xl p-1.5">
+                <button
+                  type="button"
+                  onClick={() => setGuests(Math.max(1, guests - 1))}
+                  className="w-10 h-10 bg-slate-800 hover:bg-slate-700 text-yellow-400 rounded-lg font-bold text-base flex items-center justify-center transition-colors"
+                >
+                  -
+                </button>
+                <span className="text-sm font-semibold text-slate-200">
+                  {guests} Guest{guests > 1 ? 's' : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setGuests(Math.min(30, guests + 1))}
+                  className="w-10 h-10 bg-slate-800 hover:bg-slate-700 text-yellow-400 rounded-lg font-bold text-base flex items-center justify-center transition-colors"
+                >
+                  +
+                </button>
+              </div>
             </div>
 
             <button
