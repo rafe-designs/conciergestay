@@ -3,6 +3,7 @@
 import React, { useState, useMemo, use, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import Script from 'next/script';
 import PaystackPop from '@paystack/inline-js';
 import {
   LISTINGS,
@@ -14,6 +15,14 @@ import {
   MealItem,
 } from '@/lib/cateringData';
 
+// Currency conversion configuration
+const EXCHANGE_RATES: Record<string, { rate: number; symbol: string }> = {
+  NGN: { rate: 1, symbol: '₦' },
+  USD: { rate: 1500, symbol: '$' },
+  GBP: { rate: 1900, symbol: '£' },
+  EUR: { rate: 1650, symbol: '€' },
+};
+
 interface CheckoutPageProps {
   params: Promise<{ id: string }>;
 }
@@ -21,7 +30,11 @@ interface CheckoutPageProps {
 export default function CheckoutPage({ params }: CheckoutPageProps) {
   const resolvedParams = use(params);
   const router = useRouter();
-  const listing = LISTINGS[resolvedParams.id] || LISTINGS['ikoyi-royal-villa'];
+  const listing = LISTINGS[resolvedParams.id] || LISTINGS['new-horizon'];
+
+  // Currency & Payment Gateway State
+  const [currency, setCurrency] = useState<'NGN' | 'USD' | 'GBP' | 'EUR'>('NGN');
+  const [gateway, setGateway] = useState<'paystack' | 'flutterwave'>('paystack');
 
   // 1. Stay & Guest Info
   const [checkInDate, setCheckInDate] = useState('');
@@ -34,16 +47,13 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   // Active selected day tab for daily meal picker
   const [selectedDayTab, setSelectedDayTab] = useState<string>('');
 
-  // 2. Per-Day Catering & Food State (All orders set to delivery)
-  // Menu Category Navigation
+  // 2. Per-Day Catering & Food State
   const [activeTab, setActiveTab] = useState<'rice' | 'breakfast' | 'dinner' | 'soups' | 'spiced_comforts'>('rice');
 
-  // Meal state keyed by Date -> MealId -> { liters, proteins: { id: string, qty: number }[] }
   const [dailyMeals, setDailyMeals] = useState<
     Record<string, Record<string, { liters: number; proteins: { id: string; qty: number }[] }>>
   >({});
 
-  // Soup state keyed by Date -> SoupId -> { liters, swallow, proteins: { id: string, qty: number }[] }
   const [dailySoups, setDailySoups] = useState<
     Record<string, Record<string, { liters: number; swallow: string; proteins: { id: string; qty: number }[] }>>
   >({});
@@ -87,7 +97,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
   const nights = stayDates.length;
 
-  // Automatically reset bedding and towel selections if stay is 1 night or less
   useEffect(() => {
     if (nights <= 1) {
       setBeddingBeddings('no');
@@ -95,18 +104,16 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     }
   }, [nights]);
 
-  // Ensure active day tab points to a valid stay date
   const activeDay = useMemo(() => {
     if (stayDates.includes(selectedDayTab)) return selectedDayTab;
     return stayDates[0] || '';
   }, [stayDates, selectedDayTab]);
 
-  // Combined options list for calculating total soup/spiced food prices
   const ALL_SOUP_AND_COMFORT_OPTIONS = useMemo(() => {
     return [...(SOUP_OPTIONS || []), ...(SPICED_COMFORT_OPTIONS || [])];
   }, []);
 
-  // Dynamic Total Calculation Engine
+  // Dynamic Total Calculation Engine (Calculated in NGN base)
   const totals = useMemo(() => {
     const accommodation = listing.pricePerNight * nights;
     let diningTotal = 0;
@@ -187,7 +194,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       }
     }
 
-    // Dynamic Bedding & Towel Calculation (Only applies if stay is longer than 1 night)
     if (nights > 1) {
       if (beddingBeddings === 'yes') conciergeTotal += 10000 * nights;
       if (beddingTowels === 'yes') conciergeTotal += 3000 * nights;
@@ -221,7 +227,14 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     beddingTowels,
   ]);
 
-  // Per-Day Meal Handlers
+  // Price Formatter helper based on active currency
+  const formatPrice = (amountInNGN: number) => {
+    const curr = EXCHANGE_RATES[currency] || EXCHANGE_RATES.NGN;
+    const converted = amountInNGN / curr.rate;
+    return `${curr.symbol}${converted.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  };
+
+  // Handlers for meals & add-ons
   const updateMealLiters = (date: string, id: string, liters: number) => {
     const dayMeals = dailyMeals[date] || {};
     const currentData = dayMeals[id] || { liters: 0, proteins: [] };
@@ -234,10 +247,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       updatedDayMeals[id] = { ...currentData, liters: cappedLiters };
     }
 
-    setDailyMeals({
-      ...dailyMeals,
-      [date]: updatedDayMeals,
-    });
+    setDailyMeals({ ...dailyMeals, [date]: updatedDayMeals });
   };
 
   const updateSoupLiters = (date: string, soupId: string, liters: number) => {
@@ -252,10 +262,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       updatedDaySoups[soupId] = { ...current, liters: cappedLiters, proteins: current.proteins || [] };
     }
 
-    setDailySoups({
-      ...dailySoups,
-      [date]: updatedDaySoups,
-    });
+    setDailySoups({ ...dailySoups, [date]: updatedDaySoups });
   };
 
   const toggleMealProtein = (date: string, mealId: string, proteinId: string) => {
@@ -274,10 +281,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
     setDailyMeals({
       ...dailyMeals,
-      [date]: {
-        ...dayMeals,
-        [mealId]: { ...currentData, proteins: updatedProteins },
-      },
+      [date]: { ...dayMeals, [mealId]: { ...currentData, proteins: updatedProteins } },
     });
   };
 
@@ -292,10 +296,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
     setDailyMeals({
       ...dailyMeals,
-      [date]: {
-        ...dayMeals,
-        [mealId]: { ...currentData, proteins: updatedProteins },
-      },
+      [date]: { ...dayMeals, [mealId]: { ...currentData, proteins: updatedProteins } },
     });
   };
 
@@ -316,10 +317,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
     setDailySoups({
       ...dailySoups,
-      [date]: {
-        ...daySoups,
-        [soupId]: { ...currentData, proteins: updatedProteins },
-      },
+      [date]: { ...daySoups, [soupId]: { ...currentData, proteins: updatedProteins } },
     });
   };
 
@@ -334,15 +332,12 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
     setDailySoups({
       ...dailySoups,
-      [date]: {
-        ...daySoups,
-        [soupId]: { ...currentData, proteins: updatedProteins },
-      },
+      [date]: { ...daySoups, [soupId]: { ...currentData, proteins: updatedProteins } },
     });
   };
 
-  // Paystack Popup Handler
-  const handlePaystackPayment = (e: React.FormEvent) => {
+  // Payment Submission Handler (Paystack or Flutterwave)
+  const handlePaymentSubmission = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!checkInDate || !checkOutDate) {
@@ -355,137 +350,181 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       return;
     }
 
-    const paystackKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || 'pk_test_placeholder';
     const uniqueTxRef = 'CS_' + Math.floor(Math.random() * 1000000000 + 1);
 
-    try {
-      const paystack = new PaystackPop();
-      paystack.newTransaction({
-        key: paystackKey,
-        email: email,
-        amount: totals.totalDue * 100,
-        currency: 'NGN',
-        ref: uniqueTxRef,
-        metadata: {
-          custom_fields: [
-            { display_name: 'Full Name', variable_name: 'full_name', value: fullName },
-            { display_name: 'Phone Number', variable_name: 'phone_number', value: phone },
-            { display_name: 'Guests', variable_name: 'guests', value: guests },
-            { display_name: 'Stay Duration', variable_name: 'stay_duration', value: `${nights} Nights (${checkInDate} to ${checkOutDate})` },
-          ],
-        },
-        onSuccess: async (response: { reference: string }) => {
-          const finalRef = response.reference || uniqueTxRef;
+    // Calculate converted amount for payment gateway
+    const currConfig = EXCHANGE_RATES[currency] || EXCHANGE_RATES.NGN;
+    const finalAmountInCurrency = Math.round(totals.totalDue / currConfig.rate);
 
-          let formattedAirportTransfer = 'None';
-          if (airportTransferType !== 'none') {
-            const vehicleName = airportTransferType === 'suv' ? 'Luxury SUV (₦85,000)' : 'Executive Sedan (₦45,000)';
-            const directionLabel = 
-              airportTripDirection === 'round_trip' ? 'Round Trip (2x Fare)' :
-              airportTripDirection === 'one_way_dropoff' ? 'One-Way Drop-off' : 'One-Way Pick-up';
-            formattedAirportTransfer = `${directionLabel} - ${vehicleName}`;
-          }
+    let formattedAirportTransfer = 'None';
+    if (airportTransferType !== 'none') {
+      const vehicleName = airportTransferType === 'suv' ? 'Luxury SUV' : 'Executive Sedan';
+      const directionLabel = 
+        airportTripDirection === 'round_trip' ? 'Round Trip (2x Fare)' :
+        airportTripDirection === 'one_way_dropoff' ? 'One-Way Drop-off' : 'One-Way Pick-up';
+      formattedAirportTransfer = `${directionLabel} - ${vehicleName}`;
+    }
 
-          let formattedChauffeur = 'None';
-          if (chauffeurService !== 'none') {
-            formattedChauffeur = 
-              chauffeurService === 'luxury_sedan' ? `Luxury Sedan (${nights} Days)` :
-              chauffeurService === 'commuter' ? `Executive Commuter Shuttle (${nights} Days)` : `Executive Sedan (${nights} Days)`;
-          }
+    let formattedChauffeur = 'None';
+    if (chauffeurService !== 'none') {
+      formattedChauffeur = 
+        chauffeurService === 'luxury_sedan' ? `Luxury Sedan (${nights} Days)` :
+        chauffeurService === 'commuter' ? `Executive Commuter Shuttle (${nights} Days)` : `Executive Sedan (${nights} Days)`;
+    }
 
-          let formattedSecurity = 'None';
-          if (securityService !== 'none') {
-            const secLabel = 
-              securityService === 'bouncer' ? 'Protection (Bouncers)' :
-              securityService === 'bodyguard' ? 'Executive Bodyguards' : 'Tactical Unit';
-            formattedSecurity = `${secLabel} (${securityCount} Personnel, ${nights} Nights)`;
-          }
+    let formattedSecurity = 'None';
+    if (securityService !== 'none') {
+      const secLabel = 
+        securityService === 'bouncer' ? 'Protection (Bouncers)' :
+        securityService === 'bodyguard' ? 'Executive Bodyguards' : 'Tactical Unit';
+      formattedSecurity = `${secLabel} (${securityCount} Personnel, ${nights} Nights)`;
+    }
 
-          const payload = {
-            transactionRef: finalRef,
-            listingId: resolvedParams.id,
-            apartmentTitle: listing.title,
-            checkIn: checkInDate,
-            checkOut: checkOutDate,
-            totalNights: nights,
-            baseRentTotal: totals.accommodation,
-            diningTotal: totals.diningTotal,
-            conciergeTotal: totals.conciergeTotal,
-            servicesTotal: totals.diningTotal + totals.conciergeTotal,
-            grandTotal: totals.totalDue,
-            apartmentCut: totals.accommodation,
-            servicesCut: totals.diningTotal + totals.conciergeTotal,
-            guestInfo: { fullName, email, phone, guests },
-            dailyMealSelections: {
-              meals: dailyMeals,
-              soups: dailySoups,
-            },
-            addons: {
-              airportTransfer: formattedAirportTransfer,
-              chauffeurService: formattedChauffeur,
-              securityService: formattedSecurity,
-              shoppersCount,
-              laundryAdult,
-              laundryKid,
-              laundrySuit,
-              housekeepingActive,
-              housekeepingSchedule,
-              beddingBeddings: nights > 1 ? beddingBeddings : 'no',
-              beddingTowels: nights > 1 ? beddingTowels : 'no',
-            },
-          };
+    const payload = {
+      transactionRef: uniqueTxRef,
+      listingId: resolvedParams.id,
+      apartmentTitle: listing.title,
+      checkIn: checkInDate,
+      checkOut: checkOutDate,
+      totalNights: nights,
+      baseRentTotal: totals.accommodation,
+      diningTotal: totals.diningTotal,
+      conciergeTotal: totals.conciergeTotal,
+      servicesTotal: totals.diningTotal + totals.conciergeTotal,
+      grandTotal: totals.totalDue,
+      currency,
+      guestInfo: { fullName, email, phone, guests },
+      dailyMealSelections: { meals: dailyMeals, soups: dailySoups },
+      addons: {
+        airportTransfer: formattedAirportTransfer,
+        chauffeurService: formattedChauffeur,
+        securityService: formattedSecurity,
+        shoppersCount,
+        laundryAdult,
+        laundryKid,
+        laundrySuit,
+        housekeepingActive,
+        housekeepingSchedule,
+        beddingBeddings: nights > 1 ? beddingBeddings : 'no',
+        beddingTowels: nights > 1 ? beddingTowels : 'no',
+      },
+    };
 
-          localStorage.setItem('booking_confirmation_payload', JSON.stringify(payload));
+    localStorage.setItem('booking_confirmation_payload', JSON.stringify(payload));
 
-          try {
-            const res = await fetch('/api/bookings/verify', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                transactionRef: finalRef,
-                bookingData: payload,
-              }),
-            });
+    const saveBookingToServer = async (txRef: string) => {
+      try {
+        await fetch('/api/bookings/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transactionRef: txRef, bookingData: payload }),
+        });
+        router.push(`/booking-success?reference=${txRef}&listing=${resolvedParams.id}`);
+      } catch (err) {
+        console.error('Error saving booking:', err);
+        router.push(`/booking-success?reference=${txRef}&listing=${resolvedParams.id}`);
+      }
+    };
 
-            const data = await res.json();
-
-            if (!res.ok) {
-              console.error('Server error saving booking:', data);
-              alert(`Payment successful, but saving booking failed: ${data.message || data.error}`);
-              return;
+    if (gateway === 'paystack') {
+      const paystackKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || 'pk_test_placeholder';
+      try {
+        const paystack = new PaystackPop();
+        paystack.newTransaction({
+          key: paystackKey,
+          email: email,
+          amount: totals.totalDue * 100, // Paystack expects amount in kobo/cents for NGN
+          currency: 'NGN',
+          ref: uniqueTxRef,
+          onSuccess: (response: { reference: string }) => {
+            saveBookingToServer(response.reference || uniqueTxRef);
+          },
+          onCancel: () => {
+            alert('Paystack transaction was cancelled.');
+          },
+        });
+      } catch (err) {
+        console.error('Paystack error:', err);
+        alert('Failed to initialize Paystack.');
+      }
+    } else {
+      // Flutterwave Integration
+      // @ts-ignore
+      if (typeof window !== 'undefined' && window.FlutterwaveCheckout) {
+        const flutterwaveKey = process.env.NEXT_PUBLIC_FLUTTERWAVE_PUBLIC_KEY || 'FLWPUBK_TEST-placeholder';
+        // @ts-ignore
+        window.FlutterwaveCheckout({
+          public_key: flutterwaveKey,
+          tx_ref: uniqueTxRef,
+          amount: finalAmountInCurrency,
+          currency: currency,
+          payment_options: 'card, banktransfer, ussd',
+          customer: {
+            email: email,
+            phone_number: phone,
+            name: fullName,
+          },
+          customizations: {
+            title: listing.title,
+            description: `Short-let stay for ${nights} night(s) with concierge services`,
+            logo: 'https://assets.piedpiper.com/logo.png',
+          },
+          callback: function (data: { transaction_id: number; tx_ref: string; status: string }) {
+            if (data.status === 'successful' || data.status === 'completed') {
+              saveBookingToServer(data.tx_ref || uniqueTxRef);
+            } else {
+              alert('Payment was not successful. Please try again.');
             }
-
-            router.push(`/booking-success?reference=${finalRef}&listing=${resolvedParams.id}`);
-          } catch (err) {
-            console.error('Network error during booking sync:', err);
-            alert('Payment successful, but a network error occurred while recording your booking.');
-          }
-        },
-        onCancel: () => {
-          alert('Transaction was closed.');
-        },
-      });
-    } catch (err) {
-      console.error('Paystack initialization error:', err);
-      alert('Failed to load the payment gateway. Please check your internet connection.');
+          },
+          onclose: function () {
+            // Window closed
+          },
+        });
+      } else {
+        alert('Flutterwave payment gateway is still loading. Please try again in a moment.');
+      }
     }
   };
 
   return (
     <div className="min-h-screen bg-[#060b13] text-slate-100 font-sans p-4 md:p-8">
-      <Link
-        href={`/listings/${resolvedParams.id}`}
-        className="text-yellow-400 hover:text-cyan-300 text-sm flex items-center gap-2 mb-4 font-medium transition-colors"
-      >
-        ← Back to Resident Details
-      </Link>
+      {/* Load Flutterwave Inline Script */}
+      <Script src="https://checkout.flutterwave.com/v3.js" strategy="lazyOnload" />
+
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <Link
+          href={`/listings/${resolvedParams.id}`}
+          className="text-yellow-400 hover:text-cyan-300 text-sm flex items-center gap-2 font-medium transition-colors"
+        >
+          ← Back to Residence Details
+        </Link>
+
+        {/* Currency Switcher */}
+        <div className="flex items-center gap-2 bg-[#0b121e] border border-slate-800 p-1.5 rounded-xl">
+          <span className="text-[11px] font-mono text-slate-400 px-2">Currency:</span>
+          {(['NGN', 'USD', 'GBP', 'EUR'] as const).map((curr) => (
+            <button
+              key={curr}
+              type="button"
+              onClick={() => setCurrency(curr)}
+              className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+                currency === curr
+                  ? 'bg-yellow-500 text-slate-950 shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              {curr}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="mb-8">
         <h1 className="text-3xl md:text-4xl font-serif font-bold text-slate-100">
           {listing.title}
         </h1>
         <p className="text-yellow-400 text-lg font-semibold mt-1">
-          ₦{listing.pricePerNight.toLocaleString()}{' '}
+          {formatPrice(listing.pricePerNight)}{' '}
           <span className="text-slate-400 text-sm font-normal">
             / Night {nights > 0 ? `(${nights} Night${nights > 1 ? 's' : ''})` : '(Select Dates)'}
           </span>
@@ -599,24 +638,21 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     CULINARY_MEALS[activeTab]?.map((item: MealItem) => {
                       const currentData = dailyMeals[activeDay]?.[item.id] || { liters: 0, proteins: [] };
                       const isSelected = currentData.liters > 0;
-                      const dynamicPrice = item.basePrice;
 
                       return (
                         <div
                           key={item.id}
                           className="bg-[#060b13] border border-slate-800/80 rounded-xl p-4 space-y-3"
                         >
-                          {/* Responsive flex container stacking on mobile */}
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div>
                               <p className="text-sm font-semibold text-slate-200">{item.name}</p>
                               <p className="text-xs text-amber-400 mt-1 font-semibold">
-                                ₦{dynamicPrice.toLocaleString()} / Liter
+                                {formatPrice(item.basePrice)} / Liter
                               </p>
                             </div>
                             <div className="flex items-center justify-between sm:justify-end gap-2">
                               <label className="text-[11px] text-slate-400 uppercase">Liters (Max 10)</label>
-                              {/* Touch-Friendly Stepper */}
                               <div className="flex items-center gap-1 bg-[#0b121e] border border-slate-800 rounded-lg p-1">
                                 <button
                                   type="button"
@@ -663,14 +699,13 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                                         />
                                         <span className="text-xs text-slate-300">
                                           {p.name}{' '}
-                                          <span className="text-yellow-400/80">(+₦{p.price.toLocaleString()})</span>
+                                          <span className="text-yellow-400/80">(+{formatPrice(p.price)})</span>
                                         </span>
                                       </label>
 
                                       {isChecked && (
                                         <div className="flex items-center justify-between w-full sm:w-auto gap-2 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-800/40">
                                           <span className="text-[10px] text-slate-400 uppercase">Qty (Pcs):</span>
-                                          {/* Protein Stepper */}
                                           <div className="flex items-center gap-1">
                                             <button
                                               type="button"
@@ -719,7 +754,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                     (activeTab === 'soups' ? SOUP_OPTIONS : SPICED_COMFORT_OPTIONS).map((soup) => {
                       const current = dailySoups[activeDay]?.[soup.id] || { liters: 0, swallow: 'Amala', proteins: [] };
                       const isSelected = current.liters > 0;
-                      const dynamicPrice = soup.pricePerLiter;
 
                       return (
                         <div key={soup.id} className="bg-[#060b13] border border-slate-800/80 rounded-xl p-4 space-y-3">
@@ -727,12 +761,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                             <div>
                               <p className="text-sm font-semibold text-slate-200">{soup.name}</p>
                               <p className="text-xs text-yellow-400 mt-1 font-semibold">
-                                ₦{dynamicPrice.toLocaleString()} / Liter
+                                {formatPrice(soup.pricePerLiter)} / Liter
                               </p>
                             </div>
                             <div className="flex items-center justify-between sm:justify-end gap-2">
                               <label className="text-[11px] text-slate-400 uppercase">Qty (Max 10)</label>
-                              {/* Soup Stepper */}
                               <div className="flex items-center gap-1 bg-[#0b121e] border border-slate-800 rounded-lg p-1">
                                 <button
                                   type="button"
@@ -806,14 +839,13 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                                           />
                                           <span className="text-xs text-slate-300">
                                             {p.name}{' '}
-                                            <span className="text-yellow-400/80">(+₦{p.price.toLocaleString()})</span>
+                                            <span className="text-yellow-400/80">(+{formatPrice(p.price)})</span>
                                           </span>
                                         </label>
 
                                         {isChecked && (
                                           <div className="flex items-center justify-between w-full sm:w-auto gap-2 pt-1 sm:pt-0 border-t sm:border-t-0 border-slate-800/40">
                                             <span className="text-[10px] text-slate-400 uppercase">Qty (Pcs):</span>
-                                            {/* Soup Protein Stepper */}
                                             <div className="flex items-center gap-1">
                                               <button
                                                 type="button"
@@ -877,8 +909,8 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                   className="w-full bg-[#060b13] border border-slate-500/40 rounded-xl p-3.5 text-sm text-slate-200 focus:outline-none"
                 >
                   <option value="none">No Airport Transfer</option>
-                  <option value="sedan">Executive Sedan (₦45,000)</option>
-                  <option value="suv">Luxury SUV (₦85,000)</option>
+                  <option value="sedan">Executive Sedan ({formatPrice(45000)})</option>
+                  <option value="suv">Luxury SUV ({formatPrice(85000)})</option>
                 </select>
               </div>
 
@@ -909,9 +941,9 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                 className="w-full bg-[#060b13] border border-slate-700/60 rounded-xl p-3.5 text-sm text-slate-200 focus:outline-none"
               >
                 <option value="none">No Dedicated Chauffeur</option>
-                <option value="sedan">Executive Sedan (₦250,000/day)</option>
-                <option value="luxury_sedan">Luxury Sedan (₦350,000/day)</option>
-                <option value="commuter">Executive Commuter Shuttle (₦150,000/day)</option>
+                <option value="sedan">Executive Sedan ({formatPrice(250000)}/day)</option>
+                <option value="luxury_sedan">Luxury Sedan ({formatPrice(350000)}/day)</option>
+                <option value="commuter">Executive Commuter Shuttle ({formatPrice(150000)}/day)</option>
               </select>
             </div>
           </div>
@@ -929,9 +961,9 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                 className="w-full bg-[#060b13] border border-slate-500/50 rounded-xl p-3.5 text-sm text-slate-200 mb-3 focus:outline-none"
               >
                 <option value="none">No Additional Security</option>
-                <option value="tactical">Tactical Unit (₦80,000/day)</option>
-                <option value="bodyguard">Executive Bodyguards (₦120,000/day)</option>
-                <option value="bouncer">Protection (Bouncers) (₦200,000/day)</option>
+                <option value="tactical">Tactical Unit ({formatPrice(80000)}/day)</option>
+                <option value="bodyguard">Executive Bodyguards ({formatPrice(120000)}/day)</option>
+                <option value="bouncer">Protection (Bouncers) ({formatPrice(200000)}/day)</option>
               </select>
 
               {securityService !== 'none' && (
@@ -957,7 +989,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                 <h3 className="text-yellow-400 text-sm font-bold">🛍️ Personal Shoppers</h3>
                 <span className="text-[11px] text-amber-400 font-semibold">{nights} Night{nights > 1 ? 's' : ''}</span>
               </div>
-              <p className="text-xs text-slate-400 mb-3">₦15,000 / Day per Shopper</p>
+              <p className="text-xs text-slate-400 mb-3">{formatPrice(15000)} / Day per Shopper</p>
               <div>
                 <label className="text-xs text-slate-400 block mb-1">NUMBER OF SHOPPERS (MAX 5)</label>
                 <select
@@ -981,7 +1013,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
               <h3 className="text-yellow-400 text-sm font-bold mb-3">🧺 Laundry Breakdown</h3>
               <div className="space-y-3">
                 <div className="flex justify-between items-center gap-4">
-                  <span className="text-xs text-slate-300">Adult Outfits (₦1,500)</span>
+                  <span className="text-xs text-slate-300">Adult Outfits ({formatPrice(1500)})</span>
                   <select
                     value={laundryAdult}
                     onChange={(e) => setLaundryAdult(e.target.value)}
@@ -993,7 +1025,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                   </select>
                 </div>
                 <div className="flex justify-between items-center gap-4">
-                  <span className="text-xs text-slate-300">Kids Wear (₦1,000)</span>
+                  <span className="text-xs text-slate-300">Kids Wear ({formatPrice(1000)})</span>
                   <select
                     value={laundryKid}
                     onChange={(e) => setLaundryKid(e.target.value)}
@@ -1005,7 +1037,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                   </select>
                 </div>
                 <div className="flex justify-between items-center gap-4">
-                  <span className="text-xs text-slate-300">Suits & Ceremonial (₦5,000)</span>
+                  <span className="text-xs text-slate-300">Suits & Ceremonial ({formatPrice(5000)})</span>
                   <select
                     value={laundrySuit}
                     onChange={(e) => setLaundrySuit(e.target.value)}
@@ -1022,7 +1054,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             <div className="bg-[#0b121e] border border-slate-800/80 rounded-2xl p-5 shadow-xl">
               <div className="flex justify-between items-center mb-3">
                 <h3 className="text-yellow-400 text-sm font-bold">🧹 Housekeeping</h3>
-                <span className="text-xs text-amber-400 font-bold">₦25,000 / Session</span>
+                <span className="text-xs text-amber-400 font-bold">{formatPrice(25000)} / Session</span>
               </div>
               <div className="space-y-3">
                 <div>
@@ -1068,7 +1100,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="text-xs text-slate-400 block mb-1">FRESH BEDDINGS CHANGE (₦10,000/NIGHT)</label>
+                <label className="text-xs text-slate-400 block mb-1">FRESH BEDDINGS CHANGE ({formatPrice(10000)}/NIGHT)</label>
                 <select
                   value={beddingBeddings}
                   onChange={(e) => setBeddingBeddings(e.target.value)}
@@ -1089,7 +1121,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
               </div>
 
               <div>
-                <label className="text-xs text-slate-400 block mb-1">FRESH LUXURY TOWELS (₦3,000/NIGHT)</label>
+                <label className="text-xs text-slate-400 block mb-1">FRESH LUXURY TOWELS ({formatPrice(3000)}/NIGHT)</label>
                 <select
                   value={beddingTowels}
                   onChange={(e) => setBeddingTowels(e.target.value)}
@@ -1113,7 +1145,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
         </div>
 
-        {/* Right Column: Reservation Summary */}
+        {/* Right Column: Reservation Summary & Payment */}
         <div className="bg-[#0b121e] border border-slate-800/80 rounded-2xl p-6 shadow-2xl h-fit space-y-6 sticky top-6">
           <div>
             <h2 className="text-yellow-400 text-xs tracking-wider uppercase font-bold mb-6">RESERVATION SUMMARY</h2>
@@ -1121,27 +1153,27 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             <div className="space-y-4 text-sm border-b border-slate-800/80 pb-6">
               <div className="flex justify-between items-center text-slate-300">
                 <span>Accommodation ({nights} Night{nights > 1 ? 's' : ''})</span>
-                <span className="font-bold text-yellow-400">₦{totals.accommodation.toLocaleString()}</span>
+                <span className="font-bold text-yellow-400">{formatPrice(totals.accommodation)}</span>
               </div>
 
               <div className="flex justify-between items-center text-slate-300">
                 <span>Dining & Fine Meals</span>
-                <span className="font-bold text-amber-400">₦{totals.diningTotal.toLocaleString()}</span>
+                <span className="font-bold text-amber-400">{formatPrice(totals.diningTotal)}</span>
               </div>
 
               <div className="flex justify-between items-center text-slate-300">
                 <span>Concierge Add-Ons</span>
-                <span className="font-bold text-yellow-400">₦{totals.conciergeTotal.toLocaleString()}</span>
+                <span className="font-bold text-yellow-400">{formatPrice(totals.conciergeTotal)}</span>
               </div>
             </div>
 
             <div className="flex justify-between items-center mt-6 text-lg font-bold">
-              <span className="text-slate-200">Total Due</span>
-              <span className="text-yellow-400 text-xl">₦{totals.totalDue.toLocaleString()}</span>
+              <span className="text-slate-200">Total Due ({currency})</span>
+              <span className="text-yellow-400 text-xl">{formatPrice(totals.totalDue)}</span>
             </div>
           </div>
 
-          <form onSubmit={handlePaystackPayment} className="pt-4 border-t border-slate-800/80 space-y-4">
+          <form onSubmit={handlePaymentSubmission} className="pt-4 border-t border-slate-800/80 space-y-4">
             <h3 className="text-yellow-400 text-xs tracking-wider uppercase font-bold">GUEST DETAILS</h3>
 
             <div>
@@ -1182,7 +1214,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
             <div>
               <label className="text-xs uppercase font-semibold text-slate-400 block mb-2">NUMBER OF GUESTS</label>
-              {/* Touch-Friendly Guest Stepper */}
               <div className="flex items-center justify-between bg-[#060b13] border border-slate-800 rounded-xl p-1.5">
                 <button
                   type="button"
@@ -1204,11 +1235,40 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
               </div>
             </div>
 
+            {/* Payment Gateway Selector */}
+            <div>
+              <label className="text-xs uppercase font-semibold text-slate-400 block mb-2">CHOOSE PAYMENT GATEWAY</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setGateway('paystack')}
+                  className={`py-3 rounded-xl text-xs font-mono font-bold border transition ${
+                    gateway === 'paystack'
+                      ? 'bg-yellow-500 text-slate-950 border-yellow-400'
+                      : 'bg-[#060b13] text-slate-300 border-slate-800'
+                  }`}
+                >
+                  Paystack (NGN)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setGateway('flutterwave')}
+                  className={`py-3 rounded-xl text-xs font-mono font-bold border transition ${
+                    gateway === 'flutterwave'
+                      ? 'bg-yellow-500 text-slate-950 border-yellow-400'
+                      : 'bg-[#060b13] text-slate-300 border-slate-800'
+                  }`}
+                >
+                  Flutterwave ({currency})
+                </button>
+              </div>
+            </div>
+
             <button
               type="submit"
               className="w-full mt-4 bg-yellow-500 hover:bg-cyan-400 text-slate-950 font-bold py-4 rounded-xl transition-all shadow-lg shadow-cyan-500/10 uppercase tracking-wider text-xs cursor-pointer"
             >
-              Confirm & Pay ₦{totals.totalDue.toLocaleString()}
+              Confirm & Pay {formatPrice(totals.totalDue)}
             </button>
           </form>
         </div>
