@@ -4,7 +4,6 @@ import React, { useState, useMemo, use, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Script from 'next/script';
-import PaystackPop from '@paystack/inline-js';
 import {
   LISTINGS,
   CULINARY_MEALS,
@@ -14,14 +13,6 @@ import {
   SWALLOW_OPTIONS,
   MealItem,
 } from '@/lib/cateringData';
-
-// Currency conversion configuration
-const EXCHANGE_RATES: Record<string, { rate: number; symbol: string }> = {
-  NGN: { rate: 1, symbol: '₦' },
-  USD: { rate: 1500, symbol: '$' },
-  GBP: { rate: 1900, symbol: '£' },
-  EUR: { rate: 1650, symbol: '€' },
-};
 
 interface CheckoutPageProps {
   params: Promise<{ id: string }>;
@@ -35,6 +26,42 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   // Currency & Payment Gateway State
   const [currency, setCurrency] = useState<'NGN' | 'USD' | 'GBP' | 'EUR'>('NGN');
   const [gateway, setGateway] = useState<'paystack' | 'flutterwave'>('paystack');
+
+  // Real-time Dynamic Exchange Rates State (1 Unit of Foreign Currency = X Naira)
+  const [exchangeRates, setExchangeRates] = useState<Record<string, { rate: number; symbol: string }>>({
+    NGN: { rate: 1, symbol: '₦' },
+    USD: { rate: 1331, symbol: '$' },
+    GBP: { rate: 1750, symbol: '£' },
+    EUR: { rate: 1450, symbol: '€' },
+  });
+
+  // Fetch live exchange rates on component mount
+  useEffect(() => {
+    async function fetchLiveRates() {
+      try {
+        const res = await fetch('https://open.er-api.com/v6/latest/USD');
+        const data = await res.json();
+        if (data && data.result === 'success' && data.rates) {
+          const usdToNgn = data.rates.NGN || 1331;
+          const usdToGbp = data.rates.GBP || 0.78;
+          const usdToEur = data.rates.EUR || 0.92;
+
+          const ngnPerGbp = usdToGbp > 0 ? usdToNgn / usdToGbp : 1750;
+          const ngnPerEur = usdToEur > 0 ? usdToNgn / usdToEur : 1450;
+
+          setExchangeRates({
+            NGN: { rate: 1, symbol: '₦' },
+            USD: { rate: usdToNgn, symbol: '$' },
+            GBP: { rate: ngnPerGbp, symbol: '£' },
+            EUR: { rate: ngnPerEur, symbol: '€' },
+          });
+        }
+      } catch (err) {
+        console.warn('Failed to fetch live exchange rates, using fallback rates:', err);
+      }
+    }
+    fetchLiveRates();
+  }, []);
 
   // 1. Stay & Guest Info
   const [checkInDate, setCheckInDate] = useState('');
@@ -227,11 +254,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     beddingTowels,
   ]);
 
-  // Price Formatter helper based on active currency
+  // Price Formatter helper using live exchange rate division & rounded up
   const formatPrice = (amountInNGN: number) => {
-    const curr = EXCHANGE_RATES[currency] || EXCHANGE_RATES.NGN;
-    const converted = amountInNGN / curr.rate;
-    return `${curr.symbol}${converted.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    const curr = exchangeRates[currency] || exchangeRates.NGN;
+    const converted = Math.round(amountInNGN / curr.rate);
+    return `${curr.symbol}${converted.toLocaleString()}`;
   };
 
   // Handlers for meals & add-ons
@@ -337,7 +364,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   };
 
   // Payment Submission Handler (Paystack or Flutterwave)
-  const handlePaymentSubmission = (e: React.FormEvent) => {
+  const handlePaymentSubmission = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!checkInDate || !checkOutDate) {
@@ -353,7 +380,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     const uniqueTxRef = 'CS_' + Math.floor(Math.random() * 1000000000 + 1);
 
     // Calculate converted amount for payment gateway
-    const currConfig = EXCHANGE_RATES[currency] || EXCHANGE_RATES.NGN;
+    const currConfig = exchangeRates[currency] || exchangeRates.NGN;
     const finalAmountInCurrency = Math.round(totals.totalDue / currConfig.rate);
 
     let formattedAirportTransfer = 'None';
@@ -429,6 +456,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     if (gateway === 'paystack') {
       const paystackKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || 'pk_test_placeholder';
       try {
+        const PaystackPop = (await import('@paystack/inline-js')).default;
         const paystack = new PaystackPop();
         paystack.newTransaction({
           key: paystackKey,
@@ -448,15 +476,16 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         alert('Failed to initialize Paystack.');
       }
     } else {
-      // Flutterwave Integration
+      // Flutterwave Integration with Dynamic Environment Variable
       // @ts-ignore
       if (typeof window !== 'undefined' && window.FlutterwaveCheckout) {
-        const flutterwaveKey = process.env.NEXT_PUBLIC_FLUTTERWAVE_PUBLIC_KEY || 'FLWPUBK_TEST-placeholder';
+        const flutterwaveKey = (process.env.NEXT_PUBLIC_FLUTTERWAVE_PUBLIC_KEY || '').trim();
+        
         // @ts-ignore
         window.FlutterwaveCheckout({
           public_key: flutterwaveKey,
           tx_ref: uniqueTxRef,
-          amount: finalAmountInCurrency,
+          amount: currency === 'NGN' ? totals.totalDue : finalAmountInCurrency,
           currency: currency,
           payment_options: 'card, banktransfer, ussd',
           customer: {
@@ -501,12 +530,15 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
         {/* Currency Switcher */}
         <div className="flex items-center gap-2 bg-[#0b121e] border border-slate-800 p-1.5 rounded-xl">
-          <span className="text-[11px] font-mono text-slate-400 px-2">Currency:</span>
+          <span className="text-[11px] font-mono text-slate-400 px-2">Currency (Live):</span>
           {(['NGN', 'USD', 'GBP', 'EUR'] as const).map((curr) => (
             <button
               key={curr}
               type="button"
-              onClick={() => setCurrency(curr)}
+              onClick={() => {
+                setCurrency(curr);
+                if (curr !== 'NGN') setGateway('paystack');
+              }}
               className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
                 currency === curr
                   ? 'bg-yellow-500 text-slate-950 shadow'
@@ -1252,14 +1284,17 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setGateway('flutterwave')}
+                  onClick={() => {
+                    setGateway('flutterwave');
+                    setCurrency('NGN');
+                  }}
                   className={`py-3 rounded-xl text-xs font-mono font-bold border transition ${
                     gateway === 'flutterwave'
                       ? 'bg-yellow-500 text-slate-950 border-yellow-400'
                       : 'bg-[#060b13] text-slate-300 border-slate-800'
                   }`}
                 >
-                  Flutterwave ({currency})
+                  Flutterwave (NGN)
                 </button>
               </div>
             </div>

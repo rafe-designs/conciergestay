@@ -9,7 +9,7 @@ export interface Listing {
   gallery?: string[];
   features?: string[];
   description?: string;
-  type?: 'apartment' | 'villa' | 'mansion';
+  type?: 'apartment' | 'villa' | 'mansion'| 'penthouse';
 }
 
 export const LISTINGS: Record<string, Listing> = {
@@ -135,7 +135,7 @@ export const LISTINGS: Record<string, Listing> = {
   'irene': {
     id: 'irene',
     title: 'Irene',
-    pricePerNight: 550000,
+    pricePerNight: 650000,
     location: 'Ikate, Lagos',
     address: 'Ikate, Lekki by Chisco, Lagos, Nigeria',
     type: 'apartment',
@@ -146,14 +146,14 @@ export const LISTINGS: Record<string, Listing> = {
       '/assets/irene/bedroom.jpg',
     ],
     features: [
-      '3-Bedroom Luxury Suite', 
+      '4-Bedroom Luxury Suite', 
       'Super fast wifi',
       '24/7 Power',
       'Premium Security ', 
-      'Netflix ', 
-      'Table tennis court', 
+      'Smart TV & Netflix ', 
+      'Indoor Snooker Table', 
       'Smart door lock (self checkin)', 
-      'Air Hockey Table', 
+      'Indoor Cinema', 
     ],
     description: 'Situated in a prime, highly accessible location in Ikate just off Chisco, Irene Apartment is a magnificent 3-bedroom luxury short-let suite designed for ultimate comfort, recreation, and effortless executive living. Featuring smart door lock technology for seamless self check-in, the residence offers expansive living spaces backed by 24/7 uninterrupted power, premium security, and lightning-fast Wi-Fi. Entertainment and fun abound with Netflix, DSTV, an in-house air hockey table, and an estate table tennis court. Enjoy the convenience of a fully equipped kitchen, water heating systems, professional housekeeping, dedicated car parking, and an on-site supermarket for all your daily needs. Whether traveling with family or colleagues, Irene Apartment provides an elite sanctuary of style and leisure in the heart of Lekki.',
   },
