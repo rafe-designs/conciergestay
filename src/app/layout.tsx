@@ -31,7 +31,7 @@ export const metadata: Metadata = {
   authors: [{ name: "Sunshine Concierge Residences" }],
   creator: SITE_NAME,
   icons: {
-    icon: "/favicon.png",
+    icon: "/icon.png",
   },
   // NOTE: no canonical here on purpose. A canonical set in the root layout is inherited by every page.
   // Each page sets its own (see the listing page and the homepage snippet).
