@@ -1,35 +1,35 @@
+// ====================================================================
+// FILE 2 OF 6: api/bookings/verify/route  (UPDATED: protected ₦100 test switch)
+// PASTE INTO: app/api/bookings/verify/route.ts
+// REPLACE the whole existing file. Needs file 5 (lib/bookingPayments.ts) to exist.
+// ====================================================================
+
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { Resend } from 'resend';
+import crypto from 'crypto';
+import { LISTINGS } from '@/lib/cateringData';
+import { supabase, confirmBookingByReference } from '@/lib/bookingPayments';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Save as: app/api/bookings/verify/route.ts
 
 function sanitizeAddons(rawAddons: any): Record<string, any> {
   if (!rawAddons || typeof rawAddons !== 'object') return {};
 
   const sanitized: Record<string, any> = {};
 
-  // Security Filter
   const sec = rawAddons.security || rawAddons.securityType || rawAddons.securityService;
   if (sec && !['None', 'No Additional Security', 'false'].includes(String(sec))) {
-    sanitized.security = sec;
+    sanitized.security = String(sec).slice(0, 100);
     if (rawAddons.securityCount || rawAddons.guards) {
-      sanitized.securityCount = Number(rawAddons.securityCount || rawAddons.guards || 1);
+      sanitized.securityCount = Math.min(5, Math.max(1, Number(rawAddons.securityCount || rawAddons.guards || 1)));
     }
   }
 
-  // Airport Transfer Filter with Fallback Auto-Parsing for Direction
   const airport = rawAddons.airport || rawAddons.airportTransfer;
   if (airport && !['None', 'No Airport Transfer', 'false'].includes(String(airport))) {
-    sanitized.airport = airport;
-    
+    sanitized.airport = String(airport).slice(0, 100);
     const explicitDirection = rawAddons.airportDirection || rawAddons.direction || rawAddons.tripType;
     if (explicitDirection) {
-      sanitized.airportDirection = explicitDirection;
+      sanitized.airportDirection = String(explicitDirection).slice(0, 50);
     } else {
       const stringVal = String(airport).toLowerCase();
       if (stringVal.includes('round trip') || stringVal.includes('round_trip')) {
@@ -40,22 +40,19 @@ function sanitizeAddons(rawAddons: any): Record<string, any> {
     }
   }
 
-  // Housekeeping Filter
   const hk = rawAddons.housekeeping || rawAddons.housekeepingService || rawAddons.housekeepingActive;
   if (hk && !['None', 'No Housekeeping Service', 'no', 'false'].includes(String(hk))) {
-    sanitized.housekeeping = hk;
+    sanitized.housekeeping = String(hk).slice(0, 50);
     if (rawAddons.housekeepingSchedule || rawAddons.frequency) {
-      sanitized.housekeepingSchedule = rawAddons.housekeepingSchedule || rawAddons.frequency;
+      sanitized.housekeepingSchedule = String(rawAddons.housekeepingSchedule || rawAddons.frequency).slice(0, 50);
     }
   }
 
-  // Chauffeur Filter
   const chauffeur = rawAddons.chauffeur || rawAddons.chauffeurService;
   if (chauffeur && !['None', 'No Chauffeur Service', 'false'].includes(String(chauffeur))) {
-    sanitized.chauffeur = chauffeur;
+    sanitized.chauffeur = String(chauffeur).slice(0, 100);
   }
 
-  // Laundry Filter
   const laundryObj = rawAddons.laundry && typeof rawAddons.laundry === 'object' ? rawAddons.laundry : {
     adult: Number(rawAddons.laundryAdult) || 0,
     kid: Number(rawAddons.laundryKid) || 0,
@@ -63,10 +60,13 @@ function sanitizeAddons(rawAddons: any): Record<string, any> {
   };
   const totalPcs = (Number(laundryObj.adult) || 0) + (Number(laundryObj.kid) || 0) + (Number(laundryObj.suit) || 0);
   if (totalPcs > 0) {
-    sanitized.laundry = laundryObj;
+    sanitized.laundry = {
+      adult: Math.min(100, Math.max(0, Number(laundryObj.adult) || 0)),
+      kid: Math.min(100, Math.max(0, Number(laundryObj.kid) || 0)),
+      suit: Math.min(100, Math.max(0, Number(laundryObj.suit) || 0)),
+    };
   }
 
-  // Beddings & Linen Filter
   let beddingsObj = rawAddons.beddings || rawAddons.linen;
   if (!beddingsObj || typeof beddingsObj !== 'object') {
     beddingsObj = {
@@ -75,254 +75,147 @@ function sanitizeAddons(rawAddons: any): Record<string, any> {
       selection: rawAddons.beddingSelection || 'Standard'
     };
   }
-  
-  const towelsVal = String(beddingsObj.towels || '').toLowerCase();
-  const beddingsVal = String(beddingsObj.beddings || '').toLowerCase();
-  const selectionVal = String(beddingsObj.selection || '').toLowerCase();
 
-  const hasActiveTowels = towelsVal === 'yes' || towelsVal === 'true' || towelsVal === '1' || (towelsVal !== 'no' && towelsVal !== 'false' && towelsVal !== '');
-  const hasActiveBeddings = beddingsVal === 'yes' || beddingsVal === 'true' || beddingsVal === '1' || (beddingsVal !== 'no' && beddingsVal !== 'false' && beddingsVal !== '');
-  const hasPaidSelection = selectionVal && !['none', 'standard', 'standard (no daily change)', 'false', 'no'].includes(selectionVal);
+  sanitized.beddings = {
+    towels: String(beddingsObj.towels || 'no').slice(0, 20),
+    beddings: String(beddingsObj.beddings || 'no').slice(0, 20),
+    selection: String(beddingsObj.selection || 'Standard').slice(0, 50),
+  };
 
-  if (hasActiveTowels || hasActiveBeddings || hasPaidSelection) {
-    sanitized.beddings = beddingsObj;
-  }
-
-  // Personal Shopper Filter
   const shopper = rawAddons.shopper || rawAddons.personalShopper;
   if (shopper && !['None', 'false'].includes(String(shopper))) {
-    sanitized.shopper = shopper;
+    sanitized.shopper = String(shopper).slice(0, 100);
   }
-
-  // Copy remaining non-default custom fields
-  Object.entries(rawAddons).forEach(([key, value]) => {
-    const isHandledKey = [
-      'security', 'securityType', 'securityService', 'securityCount', 'guards',
-      'airport', 'airportTransfer', 'airportDirection', 'direction', 'tripType',
-      'housekeeping', 'housekeepingService', 'housekeepingActive', 'housekeepingSchedule', 'frequency',
-      'chauffeur', 'chauffeurService', 'laundry', 'drycleaning', 'laundryAdult', 'laundryKid', 'laundrySuit',
-      'beddings', 'linen', 'beddingTowels', 'beddingBeddings', 'beddingSelection', 'shopper', 'personalShopper'
-    ].includes(key);
-
-    if (!isHandledKey && value && value !== 'None' && value !== false && value !== 'no' && value !== '0') {
-      sanitized[key] = value;
-    }
-  });
 
   return sanitized;
 }
 
+/**
+ * Two actions on one route:
+ *  - { action: 'initiate', transactionRef, bookingData } -> store a PENDING booking BEFORE the guest goes to Interswitch
+ *  - { transactionRef }                                  -> verify with Interswitch, mark that stored booking PAID
+ */
 export async function POST(request: Request) {
   try {
-    let body;
+    let body: any;
     try {
       body = await request.json();
-    } catch (parseError) {
-      console.error('[API Parse Error]: Request body is empty or invalid JSON');
-      return NextResponse.json({ error: 'Invalid JSON payload received' }, { status: 400 });
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON payload' }, { status: 400 });
     }
 
-    const raw = body?.bookingData || body;
-    const txRefFromRoot = body?.transactionRef;
-
-    const {
-      id,
-      reference,
-      transactionRef,
-      listingId,
-      apartmentTitle,
-      customerEmail,
-      customerName,
-      phone,
-      checkIn,
-      checkOut,
-      totalNights,
-      guestCount,
-      guestInfo,
-      baseRentTotal,
-      stayCost,
-      servicesTotal,
-      totalConciergePrice,
-      grandTotal,
-      apartmentCut,
-      platformFee,
-      platformFeeTotal,
-      diningTotal,
-      servicesCut,
-      dailyMealSelections,
-      parsedMeals,
-      addons,
-      activeAddons,
-      status,
-      paymentStatus,
-      pricePerNight,
-    } = raw || {};
-
-    const resolvedTxRef = txRefFromRoot || transactionRef || reference || `CS_REF_${Date.now()}`;
-    const parsedNights = Math.max(1, Number(totalNights) || 1);
-    const parsedBaseRent = Number(baseRentTotal ?? stayCost ?? 0);
-    const parsedServices = Number(servicesTotal ?? diningTotal ?? totalConciergePrice ?? 0);
-    const parsedGrandTotal = Number(grandTotal ?? 0);
-    const parsedPlatformFee = Number(platformFeeTotal ?? platformFee ?? 0);
-    const resolvedGuestCount = Number(guestCount ?? guestInfo?.guests ?? 1);
-    const resolvedPricePerNight = Number(pricePerNight ?? (parsedNights > 0 ? parsedBaseRent / parsedNights : 0));
-
-    const resolvedCustomerName = customerName || guestInfo?.fullName || '';
-    const resolvedCustomerEmail = customerEmail || guestInfo?.email || '';
-    const resolvedPhone = phone || guestInfo?.phone || '';
-
-    const nowIso = new Date().toISOString();
-    const sanitizedAddons = sanitizeAddons(addons || activeAddons || {});
-
-    const bookingData: Record<string, any> = {
-      id: id || crypto.randomUUID(),
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      reference: resolvedTxRef,
-      paymentReference: resolvedTxRef,
-      checkIn: checkIn ? new Date(checkIn).toISOString() : nowIso,
-      checkOut: checkOut ? new Date(checkOut).toISOString() : nowIso,
-      totalNights: parsedNights,
-      guestCount: resolvedGuestCount,
-      pricePerNight: resolvedPricePerNight,
-      baseRentTotal: parsedBaseRent,
-      servicesTotal: parsedServices,
-      grandTotal: parsedGrandTotal,
-      apartmentCut: Number(apartmentCut ?? parsedBaseRent),
-      servicesCut: Number(servicesCut ?? parsedServices),
-      platformFee: parsedPlatformFee,
-      platformFeeTotal: parsedPlatformFee,
-      status: status || 'Confirmed',
-      paymentStatus: paymentStatus || 'Paid',
-      customerName: resolvedCustomerName,
-      customerEmail: resolvedCustomerEmail,
-      phone: resolvedPhone,
-      apartmentTitle: apartmentTitle || '',
-      listingId: listingId || '',
-      dailyMealSelections: dailyMealSelections || parsedMeals || [],
-      addons: sanitizedAddons,
-    };
-
-    let { data: newBooking, error } = await supabase
-      .from('Booking')
-      .insert([bookingData])
-      .select()
-      .single();
-
-    if (error) {
-      console.error('[Supabase Insert Error]:', error.message);
-      return NextResponse.json({ error: 'Database insert failed', message: error.message }, { status: 500 });
+    const txRef = String(body?.transactionRef || body?.reference || '').trim();
+    if (!/^[A-Za-z0-9_-]{6,64}$/.test(txRef)) {
+      return NextResponse.json({ error: 'Invalid transaction reference' }, { status: 400 });
     }
 
-    // --- SEND EMAIL VIA RESEND ---
-    try {
-      if (resolvedCustomerEmail) {
-        let mealsHtml = '';
-        const rawMeals = dailyMealSelections ?? parsedMeals ?? null;
+    if (body?.action === 'initiate') return await handleInitiate(txRef, body?.bookingData, body?.testCode);
 
-        if (rawMeals) {
-          if (typeof rawMeals === 'object' && !Array.isArray(rawMeals)) {
-            const mealsData = rawMeals as Record<string, any>;
-
-            if (mealsData.meals) {
-              Object.entries(mealsData.meals as Record<string, any>).forEach(([date, meals]: [string, any]) => {
-                mealsHtml += `<h4 style="color: #fbbf24; margin-top: 10px;">📅 Date: ${date}</h4><ul>`;
-                Object.entries(meals as Record<string, any>).forEach(([mealId, data]: [string, any]) => {
-                  mealsHtml += `<li><strong>${mealId}</strong> - ${data?.liters ?? data?.qty ?? 1} Liters/Portions`;
-                  if (data?.proteins && Array.isArray(data.proteins) && data.proteins.length > 0) {
-                    mealsHtml += `<br/><span style="font-size: 12px; color: #94a3b8;">Proteins: ${data.proteins.map((p: any) => `${p?.id ?? p?.name ?? 'Protein'} (x${p?.qty ?? 1})`).join(', ')}</span>`;
-                  }
-                  mealsHtml += `</li>`;
-                });
-                mealsHtml += `</ul>`;
-              });
-            }
-
-            if (mealsData.soups) {
-              Object.entries(mealsData.soups as Record<string, any>).forEach(([date, soups]: [string, any]) => {
-                mealsHtml += `<h4 style="color: #fbbf24; margin-top: 10px;">🍲 Soups (${date})</h4><ul>`;
-                Object.entries(soups as Record<string, any>).forEach(([soupId, data]: [string, any]) => {
-                  mealsHtml += `<li><strong>${soupId}</strong> - ${data?.liters ?? data?.qty ?? 1} Portions (${data?.swallow || 'Standard'})`;
-                  if (data?.proteins && Array.isArray(data.proteins) && data.proteins.length > 0) {
-                    mealsHtml += `<br/><span style="font-size: 12px; color: #94a3b8;">Proteins: ${data.proteins.map((p: any) => `${p?.id ?? p?.name ?? 'Protein'} (x${p?.qty ?? 1})`).join(', ')}</span>`;
-                  }
-                  mealsHtml += `</li>`;
-                });
-                mealsHtml += `</ul>`;
-              });
-            }
-          } else if (Array.isArray(rawMeals) && rawMeals.length > 0) {
-            mealsHtml += `<ul>`;
-            rawMeals.forEach((m: any) => {
-              mealsHtml += `<li>${typeof m === 'string' ? m : JSON.stringify(m)}</li>`;
-            });
-            mealsHtml += `</ul>`;
-          }
-        }
-
-        let addonsHtml = '';
-        if (Object.keys(sanitizedAddons).length > 0) {
-          addonsHtml += `<ul>`;
-          Object.entries(sanitizedAddons).forEach(([key, val]) => {
-            const displayVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
-            addonsHtml += `<li><strong>${key}:</strong> ${displayVal}</li>`;
-          });
-          addonsHtml += `</ul>`;
-        } else {
-          addonsHtml = '<p>No additional concierge services selected.</p>';
-        }
-
-        await resend.emails.send({
-          from: 'Concierge Stay <onboarding@resend.dev>', // Update with your verified domain in production
-          to: [resolvedCustomerEmail],
-          subject: `Booking Confirmation & Order Breakdown - ${apartmentTitle || 'Luxury Apartment'}`,
-          html: `
-            <div style="font-family: sans-serif; background-color: #060b13; color: #f8fafc; padding: 24px; border-radius: 12px;">
-              <h2 style="color: #fbbf24; border-bottom: 1px solid #334155; padding-bottom: 12px;">Reservation Confirmed!</h2>
-              <p>Hello <strong>${resolvedCustomerName || 'Valued Guest'}</strong>,</p>
-              <p>Thank you for booking with us. Your payment has been successfully verified and your reservation is secured.</p>
-              
-              <div style="background-color: #0b121e; padding: 16px; border-radius: 8px; margin: 16px 0; border: 1px solid #1e293b;">
-                <h3 style="color: #fbbf24; margin-top: 0;">Stay Details</h3>
-                <p><strong>Apartment:</strong> ${apartmentTitle || 'N/A'}</p>
-                <p><strong>Duration:</strong> ${parsedNights} Night(s) (${checkIn ? new Date(checkIn).toLocaleDateString() : 'N/A'} to ${checkOut ? new Date(checkOut).toLocaleDateString() : 'N/A'})</p>
-                <p><strong>Guests:</strong> ${resolvedGuestCount}</p>
-                <p><strong>Reference:</strong> ${resolvedTxRef}</p>
-              </div>
-
-              <div style="background-color: #0b121e; padding: 16px; border-radius: 8px; margin: 16px 0; border: 1px solid #1e293b;">
-                <h3 style="color: #fbbf24; margin-top: 0;">Selected Concierge Add-Ons</h3>
-                ${addonsHtml}
-              </div>
-
-              <div style="background-color: #0b121e; padding: 16px; border-radius: 8px; margin: 16px 0; border: 1px solid #1e293b;">
-                <h3 style="color: #fbbf24; margin-top: 0;">Culinary Selections</h3>
-                ${mealsHtml || '<p>No custom daily meals selected.</p>'}
-              </div>
-
-              <div style="background-color: #0b121e; padding: 16px; border-radius: 8px; margin: 16px 0; border: 1px solid #1e293b;">
-                <h3 style="color: #fbbf24; margin-top: 0;">Payment Summary</h3>
-                <p>Accommodation: ₦${parsedBaseRent.toLocaleString()}</p>
-                <p>Services & Dining: ₦${parsedServices.toLocaleString()}</p>
-                <hr style="border-color: #334155;" />
-                <p style="font-size: 16px; color: #fbbf24;"><strong>Total Paid: ₦${parsedGrandTotal.toLocaleString()}</strong></p>
-              </div>
-
-              <p style="font-size: 12px; color: #94a3b8; margin-top: 24px;">If you have any questions or need to modify your itinerary, please contact our support desk.</p>
-            </div>
-          `,
-        });
-      }
-    } catch (emailError) {
-      console.error('[Resend Email Dispatch Error]:', emailError);
+    const result = await confirmBookingByReference(txRef);
+    switch (result.status) {
+      case 'paid':
+        return NextResponse.json({ success: true, booking: result.booking }, { status: 200 });
+      case 'not_found':
+        return NextResponse.json({ error: 'No booking found for this reference', pending: true }, { status: 404 });
+      case 'not_paid':
+        return NextResponse.json(
+          { error: 'Payment not verified', code: result.code, description: result.description },
+          { status: 402 }
+        );
+      case 'provider_error':
+        return NextResponse.json({ error: 'Could not reach payment provider', pending: true }, { status: 502 });
+      default:
+        return NextResponse.json({ error: 'Database error', pending: true }, { status: 500 });
     }
-
-    return NextResponse.json({ success: true, booking: newBooking }, { status: 201 });
-  } catch (error: any) {
-    console.error('[API POST Booking Detailed Error]:', error);
-    return NextResponse.json(
-      { error: 'Failed to save booking', message: error?.message || 'Internal Error' },
-      { status: 500 }
-    );
+  } catch (error) {
+    console.error('[Bookings route error]:', error);
+    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
+}
+
+function safeEqual(a: string, b: string) {
+  const ha = crypto.createHash('sha256').update(a).digest();
+  const hb = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+const TEST_TOTAL_NGN = 100;
+
+async function handleInitiate(txRef: string, raw: any, testCode?: string) {
+  if (!raw || typeof raw !== 'object') {
+    return NextResponse.json({ error: 'Missing booking data' }, { status: 400 });
+  }
+
+  const { listingId, apartmentTitle, checkIn, checkOut, totalNights, guestInfo,
+    baseRentTotal, servicesTotal, diningTotal, conciergeTotal, grandTotal, dailyMealSelections, addons } = raw;
+
+  const listing = (LISTINGS as Record<string, any>)[String(listingId)];
+  if (!listing) return NextResponse.json({ error: 'Unknown listing' }, { status: 400 });
+
+  // Protected test mode: needs the secret TEST_MODE_CODE env var AND a matching code from the URL.
+  // With no TEST_MODE_CODE set on the server, test mode is impossible.
+  let isTest = false;
+  if (testCode) {
+    const secret = process.env.TEST_MODE_CODE || '';
+    if (!secret || !safeEqual(String(testCode), secret)) {
+      return NextResponse.json({ error: 'Invalid test code' }, { status: 403 });
+    }
+    isTest = true;
+  }
+
+  const nights = Math.max(1, Number(totalNights) || 1);
+  const total = isTest ? TEST_TOTAL_NGN : Number(grandTotal);
+  const minimumDue = listing.pricePerNight * nights;
+  if (!isTest && (!Number.isFinite(total) || total < minimumDue)) {
+    console.warn('[Initiate] grandTotal below accommodation minimum', { txRef, total, minimumDue });
+    return NextResponse.json({ error: 'Amount mismatch' }, { status: 400 });
+  }
+
+  const email = String(guestInfo?.email || '').toLowerCase().trim().slice(0, 150);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return NextResponse.json({ error: 'Invalid email address format' }, { status: 400 });
+  }
+
+  const { data: existing } = await supabase.from('Booking').select('id, paymentStatus').eq('reference', txRef).maybeSingle();
+  if (existing) return NextResponse.json({ success: true, alreadyExists: true }, { status: 200 });
+
+  const nowIso = new Date().toISOString();
+  const baseRent = isTest ? TEST_TOTAL_NGN : Number(baseRentTotal || 0);
+  const services = isTest ? 0 : Number(servicesTotal ?? (Number(diningTotal || 0) + Number(conciergeTotal || 0)));
+
+  const record: Record<string, any> = {
+    id: crypto.randomUUID(),
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    reference: txRef,
+    paymentReference: txRef,
+    checkIn: checkIn ? new Date(checkIn).toISOString() : nowIso,
+    checkOut: checkOut ? new Date(checkOut).toISOString() : nowIso,
+    totalNights: nights,
+    guestCount: Math.min(50, Math.max(1, Number(guestInfo?.guests ?? 1))),
+    pricePerNight: listing.pricePerNight,
+    baseRentTotal: baseRent,
+    servicesTotal: services,
+    grandTotal: total,
+    apartmentCut: baseRent,
+    servicesCut: services,
+    platformFee: 0,
+    platformFeeTotal: 0,
+    status: 'Pending',
+    paymentStatus: 'Pending',
+    customerName: String(guestInfo?.fullName || '').slice(0, 150),
+    customerEmail: email,
+    phone: String(guestInfo?.phone || '').slice(0, 50),
+    apartmentTitle: ((isTest ? '[TEST] ' : '') + String(apartmentTitle || listing.title || '')).slice(0, 200),
+    listingId: String(listingId).slice(0, 100),
+    dailyMealSelections: dailyMealSelections || [],
+    addons: sanitizeAddons(addons || {}),
+  };
+
+  const { error } = await supabase.from('Booking').insert([record]);
+  if (error) {
+    console.error('[Initiate insert error]:', error.message);
+    return NextResponse.json({ error: 'Could not start booking', message: error.message }, { status: 500 });
+  }
+  return NextResponse.json({ success: true }, { status: 201 });
 }

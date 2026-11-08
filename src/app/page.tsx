@@ -156,7 +156,7 @@ export default function HomePage() {
 
             <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
               <div className="flex bg-slate-900/80 border border-slate-800 p-1 rounded-2xl overflow-x-auto no-scrollbar">
-                {(['all', 'penthouse', 'villa', 'mansion'] as const).map((filter) => (
+                {(['all', 'penthouse', 'villa', 'apartment'] as const).map((filter) => (
                   <button
                     key={filter}
                     onClick={() => setSelectedFilter(filter)}

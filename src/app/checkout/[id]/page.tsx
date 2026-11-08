@@ -1,9 +1,14 @@
+// ====================================================================
+// FILE 1 OF 6: CHECKOUT PAGE  (UPDATED: protected ₦100 test switch)
+// PASTE INTO: app/checkout/[id]/page.tsx
+// REPLACE the whole existing file with this one.
+// ====================================================================
+
 'use client';
 
 import React, { useState, useMemo, use, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import Script from 'next/script';
 import {
   LISTINGS,
   CULINARY_MEALS,
@@ -14,6 +19,12 @@ import {
   MealItem,
 } from '@/lib/cateringData';
 
+const IS_LIVE = process.env.NEXT_PUBLIC_QUICKTELLER_MODE === 'LIVE';
+// Web Redirect gateway page (inline popup is not used: it renders blank on the sandbox).
+const QT_PAY_URL = IS_LIVE
+  ? 'https://newwebpay.interswitchng.com/collections/w/pay'
+  : 'https://newwebpay-sandbox.interswitchng.com/collections/w/pay';
+
 interface CheckoutPageProps {
   params: Promise<{ id: string }>;
 }
@@ -21,11 +32,16 @@ interface CheckoutPageProps {
 export default function CheckoutPage({ params }: CheckoutPageProps) {
   const resolvedParams = use(params);
   const router = useRouter();
+
+  // Protected test mode: only active when the URL has ?testcode=... (the code is checked on the server).
+  const [testMode, setTestMode] = useState(false);
+  useEffect(() => {
+    setTestMode(!!new URLSearchParams(window.location.search).get('testcode'));
+  }, []);
   const listing = LISTINGS[resolvedParams.id] || LISTINGS['new-horizon'];
 
-  // Currency & Payment Gateway State
+  // Currency State
   const [currency, setCurrency] = useState<'NGN' | 'USD' | 'GBP' | 'EUR'>('NGN');
-  const [gateway, setGateway] = useState<'paystack' | 'flutterwave'>('paystack');
 
   // Real-time Dynamic Exchange Rates State (1 Unit of Foreign Currency = X Naira)
   const [exchangeRates, setExchangeRates] = useState<Record<string, { rate: number; symbol: string }>>({
@@ -90,11 +106,18 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   const [airportTripDirection, setAirportTripDirection] = useState<'one_way_pickup' | 'one_way_dropoff' | 'round_trip'>('one_way_pickup');
   
   const [chauffeurService, setChauffeurService] = useState('none');
+  const [chauffeurDurationMode, setChauffeurDurationMode] = useState<'entire_stay' | 'custom_days'>('entire_stay');
+  const [chauffeurSelectedDays, setChauffeurSelectedDays] = useState<string[]>([]);
+
   const [securityService, setSecurityService] = useState('none');
   const [securityCount, setSecurityCount] = useState(1);
-  const [shoppersCount, setShoppersCount] = useState(0);
+  const [securityDurationMode, setSecurityDurationMode] = useState<'entire_stay' | 'custom_days'>('entire_stay');
+  const [securitySelectedDays, setSecuritySelectedDays] = useState<string[]>([]);
 
-  // Laundry, Housekeeping & Bedding Dropdown States
+  const [shoppersCount, setShoppersCount] = useState(0);
+  const [shoppersDurationMode, setShoppersDurationMode] = useState<'entire_stay' | 'custom_days'>('entire_stay');
+  const [shoppersSelectedDays, setShoppersSelectedDays] = useState<string[]>([]);
+
   const [laundryAdult, setLaundryAdult] = useState('0');
   const [laundryKid, setLaundryKid] = useState('0');
   const [laundrySuit, setLaundrySuit] = useState('0');
@@ -107,8 +130,8 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   const stayDates = useMemo(() => {
     if (!checkInDate || !checkOutDate) return [];
     const dates: string[] = [];
-    const start = new Date(checkInDate);
-    const end = new Date(checkOutDate);
+    const start = new Date(checkInDate + 'T00:00:00Z');
+    const end = new Date(checkOutDate + 'T00:00:00Z');
 
     if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) {
       return [];
@@ -117,7 +140,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     const current = new Date(start);
     while (current < end) {
       dates.push(current.toISOString().split('T')[0]);
-      current.setDate(current.getDate() + 1);
+      current.setUTCDate(current.getUTCDate() + 1);
     }
     return dates;
   }, [checkInDate, checkOutDate]);
@@ -140,7 +163,19 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     return [...(SOUP_OPTIONS || []), ...(SPICED_COMFORT_OPTIONS || [])];
   }, []);
 
-  // Dynamic Total Calculation Engine (Calculated in NGN base)
+  const toggleCustomDay = (
+    date: string,
+    selectedList: string[],
+    setSelectedList: React.Dispatch<React.SetStateAction<string[]>>
+  ) => {
+    if (selectedList.includes(date)) {
+      setSelectedList(selectedList.filter((d) => d !== date));
+    } else {
+      setSelectedList([...selectedList, date]);
+    }
+  };
+
+  // Dynamic Total Calculation Engine
   const totals = useMemo(() => {
     const accommodation = listing.pricePerNight * nights;
     let diningTotal = 0;
@@ -195,17 +230,43 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       }
     }
 
-    if (chauffeurService === 'sedan') conciergeTotal += 250000 * nights;
-    if (chauffeurService === 'luxury_sedan') conciergeTotal += 350000 * nights;
-    if (chauffeurService === 'commuter') conciergeTotal += 150000 * nights;
+    if (chauffeurService !== 'none') {
+      let dailyChauffeurRate = 350000;
+      if (chauffeurService === 'sedan') dailyChauffeurRate = 350000;
+      if (chauffeurService === 'luxury_sedan') dailyChauffeurRate = 450000;
+      if (chauffeurService === 'commuter') dailyChauffeurRate = 250000;
+
+      const chauffeurDaysCount =
+        chauffeurDurationMode === 'entire_stay'
+          ? nights
+          : chauffeurSelectedDays.filter((d) => stayDates.includes(d)).length;
+
+      conciergeTotal += dailyChauffeurRate * chauffeurDaysCount;
+    }
 
     const cappedSec = Math.min(securityCount, 5);
-    if (securityService === 'tactical') conciergeTotal += 80000 * cappedSec * nights;
-    if (securityService === 'bodyguard') conciergeTotal += 120000 * cappedSec * nights;
-    if (securityService === 'bouncer') conciergeTotal += 200000 * cappedSec * nights;
+    if (securityService !== 'none') {
+      let dailySecurityRate = 80000;
+      if (securityService === 'bodyguard') dailySecurityRate = 120000;
+      if (securityService === 'bouncer') dailySecurityRate = 200000;
+
+      const securityDaysCount =
+        securityDurationMode === 'entire_stay'
+          ? nights
+          : securitySelectedDays.filter((d) => stayDates.includes(d)).length;
+
+      conciergeTotal += dailySecurityRate * cappedSec * securityDaysCount;
+    }
 
     const cappedShoppers = Math.min(shoppersCount, 5);
-    conciergeTotal += cappedShoppers * 15000 * nights;
+    if (cappedShoppers > 0) {
+      const shopperDaysCount =
+        shoppersDurationMode === 'entire_stay'
+          ? nights
+          : shoppersSelectedDays.filter((d) => stayDates.includes(d)).length;
+
+      conciergeTotal += cappedShoppers * 15000 * shopperDaysCount;
+    }
 
     const adultCount = parseInt(laundryAdult) || 0;
     const kidCount = parseInt(laundryKid) || 0;
@@ -242,9 +303,15 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     airportTransferType,
     airportTripDirection,
     chauffeurService,
+    chauffeurDurationMode,
+    chauffeurSelectedDays,
     securityService,
     securityCount,
+    securityDurationMode,
+    securitySelectedDays,
     shoppersCount,
+    shoppersDurationMode,
+    shoppersSelectedDays,
     laundryAdult,
     laundryKid,
     laundrySuit,
@@ -254,14 +321,12 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     beddingTowels,
   ]);
 
-  // Price Formatter helper using live exchange rate division & rounded up
   const formatPrice = (amountInNGN: number) => {
     const curr = exchangeRates[currency] || exchangeRates.NGN;
     const converted = Math.round(amountInNGN / curr.rate);
     return `${curr.symbol}${converted.toLocaleString()}`;
   };
 
-  // Handlers for meals & add-ons
   const updateMealLiters = (date: string, id: string, liters: number) => {
     const dayMeals = dailyMeals[date] || {};
     const currentData = dayMeals[id] || { liters: 0, proteins: [] };
@@ -363,7 +428,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     });
   };
 
-  // Payment Submission Handler (Paystack or Flutterwave)
+  // Quickteller Payment & Local Storage Sync Handler
   const handlePaymentSubmission = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -377,11 +442,23 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       return;
     }
 
-    const uniqueTxRef = 'CS_' + Math.floor(Math.random() * 1000000000 + 1);
+    if (nights < 1) {
+      alert('Check-out date must be after check-in date.');
+      return;
+    }
 
-    // Calculate converted amount for payment gateway
-    const currConfig = exchangeRates[currency] || exchangeRates.NGN;
-    const finalAmountInCurrency = Math.round(totals.totalDue / currConfig.rate);
+    const testCode = new URLSearchParams(window.location.search).get('testcode') || '';
+    const isTest = !!testCode;
+    // In protected test mode the guest is charged exactly ₦100 (10,000 kobo); the server enforces this too.
+    const amountKobo = isTest ? 10000 : Math.round(Number(totals.totalDue) * 100);
+    if (!Number.isFinite(amountKobo) || amountKobo <= 0) {
+      console.error('Invalid total, totals =', totals);
+      alert('There is a problem with your total. Please review your selections.');
+      return;
+    }
+
+    const uniqueTxRef =
+      'CS_' + Date.now() + '_' + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
 
     let formattedAirportTransfer = 'None';
     if (airportTransferType !== 'none') {
@@ -394,17 +471,36 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
     let formattedChauffeur = 'None';
     if (chauffeurService !== 'none') {
-      formattedChauffeur = 
-        chauffeurService === 'luxury_sedan' ? `Luxury Sedan (${nights} Days)` :
-        chauffeurService === 'commuter' ? `Executive Commuter Shuttle (${nights} Days)` : `Executive Sedan (${nights} Days)`;
+      const chauffeurDaysCount =
+        chauffeurDurationMode === 'entire_stay'
+          ? nights
+          : chauffeurSelectedDays.filter((d) => stayDates.includes(d)).length;
+      const chauffeurLabel =
+        chauffeurService === 'luxury_sedan' ? 'Luxury Sedan' :
+        chauffeurService === 'commuter' ? 'Executive Commuter Shuttle' : 'Executive Sedan';
+      formattedChauffeur = `${chauffeurLabel} (${chauffeurDaysCount} Days)`;
     }
 
     let formattedSecurity = 'None';
     if (securityService !== 'none') {
+      const securityDaysCount =
+        securityDurationMode === 'entire_stay'
+          ? nights
+          : securitySelectedDays.filter((d) => stayDates.includes(d)).length;
       const secLabel = 
         securityService === 'bouncer' ? 'Protection (Bouncers)' :
         securityService === 'bodyguard' ? 'Executive Bodyguards' : 'Tactical Unit';
-      formattedSecurity = `${secLabel} (${securityCount} Personnel, ${nights} Nights)`;
+      formattedSecurity = `${secLabel} (${securityCount} Personnel, ${securityDaysCount} Days)`;
+    }
+
+    let formattedShopper = 'None';
+    const cappedShoppers = Math.min(shoppersCount, 5);
+    if (cappedShoppers > 0) {
+      const shopperDaysCount =
+        shoppersDurationMode === 'entire_stay'
+          ? nights
+          : shoppersSelectedDays.filter((d) => stayDates.includes(d)).length;
+      formattedShopper = `${cappedShoppers} Personal Shopper(s) (${shopperDaysCount} Days)`;
     }
 
     const payload = {
@@ -419,14 +515,17 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       conciergeTotal: totals.conciergeTotal,
       servicesTotal: totals.diningTotal + totals.conciergeTotal,
       grandTotal: totals.totalDue,
-      currency,
+      currency: 'NGN', // the currency actually charged
+      displayCurrency: currency, // what the guest was viewing
+      createdAt: new Date().toISOString(),
+      status: 'Pending', // becomes confirmed only after server-side verification
       guestInfo: { fullName, email, phone, guests },
       dailyMealSelections: { meals: dailyMeals, soups: dailySoups },
       addons: {
         airportTransfer: formattedAirportTransfer,
         chauffeurService: formattedChauffeur,
         securityService: formattedSecurity,
-        shoppersCount,
+        shoppersService: formattedShopper,
         laundryAdult,
         laundryKid,
         laundrySuit,
@@ -437,89 +536,78 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       },
     };
 
+    // Draft only: the success page reads this, verifies the payment on the server,
+    // and only then marks the booking as confirmed.
     localStorage.setItem('booking_confirmation_payload', JSON.stringify(payload));
 
-    const saveBookingToServer = async (txRef: string) => {
-      try {
-        await fetch('/api/bookings/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transactionRef: txRef, bookingData: payload }),
-        });
-        router.push(`/booking-success?reference=${txRef}&listing=${resolvedParams.id}`);
-      } catch (err) {
-        console.error('Error saving booking:', err);
-        router.push(`/booking-success?reference=${txRef}&listing=${resolvedParams.id}`);
+    const merchantCode = process.env.NEXT_PUBLIC_QUICKTELLER_MERCHANT_CODE;
+    const payItemId = process.env.NEXT_PUBLIC_QUICKTELLER_PAY_ITEM_ID;
+
+    if (!merchantCode || !payItemId) {
+      alert('Payment is not configured. Please contact support.');
+      console.error('Missing NEXT_PUBLIC_QUICKTELLER_MERCHANT_CODE or NEXT_PUBLIC_QUICKTELLER_PAY_ITEM_ID');
+      return;
+    }
+
+    // Store a PENDING booking on the server first. Payment is later matched to it by reference,
+    // so a paid guest is never lost even if their browser/tab closes after paying.
+    try {
+      const initRes = await fetch('/api/bookings/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'initiate', transactionRef: uniqueTxRef, bookingData: payload, testCode: isTest ? testCode : undefined }),
+      });
+      if (!initRes.ok) {
+        const err = await initRes.json().catch(() => ({}));
+        console.error('Could not start booking:', err);
+        alert('We could not start your booking. Please try again.');
+        return;
       }
+    } catch (err) {
+      console.error('Could not start booking:', err);
+      alert('Network problem. Please check your connection and try again.');
+      return;
+    }
+
+    // Web Redirect: post a hidden form to Interswitch's hosted payment page.
+    // After payment they send the guest back to site_redirect_url with
+    // ?txnref=...&amount=...&resp=00&desc=... (because payment_response_type = GET).
+    const fields: Record<string, string> = {
+      merchant_code: merchantCode,
+      pay_item_id: payItemId,
+      txn_ref: uniqueTxRef,
+      amount: String(amountKobo), // kobo, whole number
+      currency: '566', // NGN
+      cust_id: email,
+      cust_email: email,
+      cust_name: fullName,
+      // cust_mobile_no intentionally NOT sent: Interswitch validates it against the NGN
+      // country and rejects foreign or oddly formatted numbers. We keep the phone in our own booking data.
+      site_redirect_url: `${window.location.origin}/booking-success`,
+      payment_response_type: 'GET',
     };
 
-    if (gateway === 'paystack') {
-      const paystackKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY || 'pk_test_placeholder';
-      try {
-        const PaystackPop = (await import('@paystack/inline-js')).default;
-        const paystack = new PaystackPop();
-        paystack.newTransaction({
-          key: paystackKey,
-          email: email,
-          amount: totals.totalDue * 100, // Paystack expects amount in kobo/cents for NGN
-          currency: 'NGN',
-          ref: uniqueTxRef,
-          onSuccess: (response: { reference: string }) => {
-            saveBookingToServer(response.reference || uniqueTxRef);
-          },
-          onCancel: () => {
-            alert('Paystack transaction was cancelled.');
-          },
-        });
-      } catch (err) {
-        console.error('Paystack error:', err);
-        alert('Failed to initialize Paystack.');
-      }
-    } else {
-      // Flutterwave Integration with Dynamic Environment Variable
-      // @ts-ignore
-      if (typeof window !== 'undefined' && window.FlutterwaveCheckout) {
-        const flutterwaveKey = (process.env.NEXT_PUBLIC_FLUTTERWAVE_PUBLIC_KEY || '').trim();
-        
-        // @ts-ignore
-        window.FlutterwaveCheckout({
-          public_key: flutterwaveKey,
-          tx_ref: uniqueTxRef,
-          amount: currency === 'NGN' ? totals.totalDue : finalAmountInCurrency,
-          currency: currency,
-          payment_options: 'card, banktransfer, ussd',
-          customer: {
-            email: email,
-            phone_number: phone,
-            name: fullName,
-          },
-          customizations: {
-            title: listing.title,
-            description: `Short-let stay for ${nights} night(s) with concierge services`,
-            logo: 'https://assets.piedpiper.com/logo.png',
-          },
-          callback: function (data: { transaction_id: number; tx_ref: string; status: string }) {
-            if (data.status === 'successful' || data.status === 'completed') {
-              saveBookingToServer(data.tx_ref || uniqueTxRef);
-            } else {
-              alert('Payment was not successful. Please try again.');
-            }
-          },
-          onclose: function () {
-            // Window closed
-          },
-        });
-      } else {
-        alert('Flutterwave payment gateway is still loading. Please try again in a moment.');
-      }
-    }
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = QT_PAY_URL;
+    Object.entries(fields).forEach(([name, value]) => {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    });
+    document.body.appendChild(form);
+    form.submit();
   };
 
   return (
     <div className="min-h-screen bg-[#060b13] text-slate-100 font-sans p-4 md:p-8">
-      {/* Load Flutterwave Inline Script */}
-      <Script src="https://checkout.flutterwave.com/v3.js" strategy="lazyOnload" />
-
+      {testMode && (
+        <div className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-center text-xs font-mono text-rose-300">
+          TEST MODE: this checkout will charge only ₦100. Remove ?testcode from the URL for a normal booking.
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <Link
           href={`/listings/${resolvedParams.id}`}
@@ -535,10 +623,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             <button
               key={curr}
               type="button"
-              onClick={() => {
-                setCurrency(curr);
-                if (curr !== 'NGN') setGateway('paystack');
-              }}
+              onClick={() => setCurrency(curr)}
               className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
                 currency === curr
                   ? 'bg-yellow-500 text-slate-950 shadow'
@@ -962,66 +1047,200 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
               )}
             </div>
 
-            <div className="bg-[#0b121e] border border-slate-800/80 rounded-2xl p-5 shadow-xl">
-              <div className="flex justify-between items-center mb-3">
+            {/* Dedicated Chauffeur Service */}
+            <div className="bg-[#0b121e] border border-slate-800/80 rounded-2xl p-5 shadow-xl space-y-4">
+              <div className="flex justify-between items-center">
                 <h3 className="text-yellow-400 text-sm font-bold">🚘 Dedicated Chauffeur Service</h3>
-                <span className="text-[11px] text-yellow-400 font-semibold">{nights} Night{nights > 1 ? 's' : ''}</span>
+                <span className="text-[11px] text-yellow-400 font-semibold">{nights} Night{nights > 1 ? 's' : ''} Stay</span>
               </div>
-              <select
-                value={chauffeurService}
-                onChange={(e) => setChauffeurService(e.target.value)}
-                className="w-full bg-[#060b13] border border-slate-700/60 rounded-xl p-3.5 text-sm text-slate-200 focus:outline-none"
-              >
-                <option value="none">No Dedicated Chauffeur</option>
-                <option value="sedan">Executive Sedan ({formatPrice(250000)}/day)</option>
-                <option value="luxury_sedan">Luxury Sedan ({formatPrice(350000)}/day)</option>
-                <option value="commuter">Executive Commuter Shuttle ({formatPrice(150000)}/day)</option>
-              </select>
+
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">CHAUFFEUR TIER & RATE</label>
+                <select
+                  value={chauffeurService}
+                  onChange={(e) => setChauffeurService(e.target.value)}
+                  className="w-full bg-[#060b13] border border-slate-700/60 rounded-xl p-3.5 text-sm text-slate-200 focus:outline-none"
+                >
+                  <option value="none">No Dedicated Chauffeur</option>
+                  <option value="sedan">Executive Sedan ({formatPrice(350000)}/day)</option>
+                  <option value="luxury_sedan">Luxury Sedan ({formatPrice(450000)}/day)</option>
+                  <option value="commuter">Executive Commuter Shuttle ({formatPrice(250000)}/day)</option>
+                </select>
+              </div>
+
+              {chauffeurService !== 'none' && (
+                <div className="space-y-3 pt-2 border-t border-slate-800/60">
+                  <label className="text-xs text-slate-400 block font-medium">CHAUFFEUR DURATION</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setChauffeurDurationMode('entire_stay')}
+                      className={`py-2 px-3 rounded-lg text-xs font-semibold border transition ${
+                        chauffeurDurationMode === 'entire_stay'
+                          ? 'bg-yellow-500 text-slate-950 border-yellow-400'
+                          : 'bg-[#060b13] text-slate-300 border-slate-800'
+                      }`}
+                    >
+                      Entire Stay ({nights} Days)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChauffeurDurationMode('custom_days')}
+                      className={`py-2 px-3 rounded-lg text-xs font-semibold border transition ${
+                        chauffeurDurationMode === 'custom_days'
+                          ? 'bg-yellow-500 text-slate-950 border-yellow-400'
+                          : 'bg-[#060b13] text-slate-300 border-slate-800'
+                      }`}
+                    >
+                      Specific Dates / Period
+                    </button>
+                  </div>
+
+                  {chauffeurDurationMode === 'custom_days' && (
+                    <div className="space-y-2 pt-2">
+                      <p className="text-[11px] text-amber-400">Select exact booking days for chauffeur service:</p>
+                      <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto pr-1">
+                        {stayDates.map((dateStr, idx) => {
+                          const isChecked = chauffeurSelectedDays.includes(dateStr);
+                          const formattedDate = new Date(dateStr).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                          });
+                          return (
+                            <button
+                              key={`chauf-${dateStr}`}
+                              type="button"
+                              onClick={() => toggleCustomDay(dateStr, chauffeurSelectedDays, setChauffeurSelectedDays)}
+                              className={`p-2 rounded-lg text-xs font-medium border flex items-center justify-between transition ${
+                                isChecked
+                                  ? 'bg-yellow-500/20 border-yellow-400 text-yellow-300'
+                                  : 'bg-[#060b13] border-slate-800 text-slate-400 hover:border-slate-700'
+                              }`}
+                            >
+                              <span>Day {idx + 1} ({formattedDate})</span>
+                              <span className={`w-3 h-3 rounded border flex items-center justify-center text-[10px] ${isChecked ? 'bg-yellow-400 border-yellow-400 text-slate-950 font-bold' : 'border-slate-600'}`}>
+                                {isChecked ? '✓' : ''}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
           {/* 4. SECURITY & PERSONAL SHOPPER ROW */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-[#0b121e] border border-slate-800/80 rounded-2xl p-5 shadow-xl">
-              <div className="flex justify-between items-center mb-3">
+            <div className="bg-[#0b121e] border border-slate-800/80 rounded-2xl p-5 shadow-xl space-y-4">
+              <div className="flex justify-between items-center">
                 <h3 className="text-yellow-400 text-sm font-bold">🛡️ Dedicated Security Details</h3>
-                <span className="text-[11px] text-amber-400 font-semibold">{nights} Night{nights > 1 ? 's' : ''}</span>
+                <span className="text-[11px] text-amber-400 font-semibold">{nights} Night{nights > 1 ? 's' : ''} Stay</span>
               </div>
-              <select
-                value={securityService}
-                onChange={(e) => setSecurityService(e.target.value)}
-                className="w-full bg-[#060b13] border border-slate-500/50 rounded-xl p-3.5 text-sm text-slate-200 mb-3 focus:outline-none"
-              >
-                <option value="none">No Additional Security</option>
-                <option value="tactical">Tactical Unit ({formatPrice(80000)}/day)</option>
-                <option value="bodyguard">Executive Bodyguards ({formatPrice(120000)}/day)</option>
-                <option value="bouncer">Protection (Bouncers) ({formatPrice(200000)}/day)</option>
-              </select>
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">SECURITY TIER</label>
+                <select
+                  value={securityService}
+                  onChange={(e) => setSecurityService(e.target.value)}
+                  className="w-full bg-[#060b13] border border-slate-500/50 rounded-xl p-3.5 text-sm text-slate-200 focus:outline-none"
+                >
+                  <option value="none">No Additional Security</option>
+                  <option value="tactical">Tactical Unit ({formatPrice(80000)}/day)</option>
+                  <option value="bodyguard">Executive Bodyguards ({formatPrice(120000)}/day)</option>
+                  <option value="bouncer">Protection (Bouncers) ({formatPrice(200000)}/day)</option>
+                </select>
+              </div>
 
               {securityService !== 'none' && (
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">PERSONNEL COUNT (MAX 5)</label>
-                  <select
-                    value={securityCount}
-                    onChange={(e) => setSecurityCount(parseInt(e.target.value) || 1)}
-                    className="w-full bg-[#060b13] border border-slate-700/60 rounded-xl p-3.5 text-sm text-slate-200 focus:outline-none"
-                  >
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <option key={n} value={n}>
-                        {n} Personnel{n > 1 ? 's' : ''}
-                      </option>
-                    ))}
-                  </select>
+                <div className="space-y-3 pt-2 border-t border-slate-800/60">
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">PERSONNEL COUNT (MAX 5)</label>
+                    <select
+                      value={securityCount}
+                      onChange={(e) => setSecurityCount(parseInt(e.target.value) || 1)}
+                      className="w-full bg-[#060b13] border border-slate-700/60 rounded-xl p-3.5 text-sm text-slate-200 focus:outline-none"
+                    >
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <option key={n} value={n}>
+                          {n} Personnel{n > 1 ? 's' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1 font-medium">SECURITY DURATION</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSecurityDurationMode('entire_stay')}
+                        className={`py-2 px-3 rounded-lg text-xs font-semibold border transition ${
+                          securityDurationMode === 'entire_stay'
+                            ? 'bg-yellow-500 text-slate-950 border-yellow-400'
+                            : 'bg-[#060b13] text-slate-300 border-slate-800'
+                        }`}
+                      >
+                        Entire Stay ({nights} Days)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSecurityDurationMode('custom_days')}
+                        className={`py-2 px-3 rounded-lg text-xs font-semibold border transition ${
+                          securityDurationMode === 'custom_days'
+                            ? 'bg-yellow-500 text-slate-950 border-yellow-400'
+                            : 'bg-[#060b13] text-slate-300 border-slate-800'
+                        }`}
+                      >
+                        Specific Dates / Period
+                      </button>
+                    </div>
+
+                    {securityDurationMode === 'custom_days' && (
+                      <div className="space-y-2 pt-2">
+                        <p className="text-[11px] text-amber-400">Select exact booking days for security details:</p>
+                        <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto pr-1">
+                          {stayDates.map((dateStr, idx) => {
+                            const isChecked = securitySelectedDays.includes(dateStr);
+                            const formattedDate = new Date(dateStr).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                            });
+                            return (
+                              <button
+                                key={`sec-${dateStr}`}
+                                type="button"
+                                onClick={() => toggleCustomDay(dateStr, securitySelectedDays, setSecuritySelectedDays)}
+                                className={`p-2 rounded-lg text-xs font-medium border flex items-center justify-between transition ${
+                                  isChecked
+                                    ? 'bg-yellow-500/20 border-yellow-400 text-yellow-300'
+                                    : 'bg-[#060b13] border-slate-800 text-slate-400 hover:border-slate-700'
+                                }`}
+                              >
+                                <span>Day {idx + 1} ({formattedDate})</span>
+                                <span className={`w-3 h-3 rounded border flex items-center justify-center text-[10px] ${isChecked ? 'bg-yellow-400 border-yellow-400 text-slate-950 font-bold' : 'border-slate-600'}`}>
+                                  {isChecked ? '✓' : ''}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
 
-            <div className="bg-[#0b121e] border border-slate-800/80 rounded-2xl p-5 shadow-xl">
-              <div className="flex justify-between items-center mb-1">
+            {/* Personal Shoppers */}
+            <div className="bg-[#0b121e] border border-slate-800/80 rounded-2xl p-5 shadow-xl space-y-4">
+              <div className="flex justify-between items-center">
                 <h3 className="text-yellow-400 text-sm font-bold">🛍️ Personal Shoppers</h3>
-                <span className="text-[11px] text-amber-400 font-semibold">{nights} Night{nights > 1 ? 's' : ''}</span>
+                <span className="text-[11px] text-amber-400 font-semibold">{nights} Night{nights > 1 ? 's' : ''} Stay</span>
               </div>
-              <p className="text-xs text-slate-400 mb-3">{formatPrice(15000)} / Day per Shopper</p>
+              <p className="text-xs text-slate-400">{formatPrice(15000)} / Day per Shopper</p>
+
               <div>
                 <label className="text-xs text-slate-400 block mb-1">NUMBER OF SHOPPERS (MAX 5)</label>
                 <select
@@ -1036,6 +1255,68 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
                   ))}
                 </select>
               </div>
+
+              {shoppersCount > 0 && (
+                <div className="space-y-3 pt-2 border-t border-slate-800/60">
+                  <label className="text-xs text-slate-400 block font-medium">SHOPPER DURATION</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShoppersDurationMode('entire_stay')}
+                      className={`py-2 px-3 rounded-lg text-xs font-semibold border transition ${
+                        shoppersDurationMode === 'entire_stay'
+                          ? 'bg-yellow-500 text-slate-950 border-yellow-400'
+                          : 'bg-[#060b13] text-slate-300 border-slate-800'
+                      }`}
+                    >
+                      Entire Stay ({nights} Days)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShoppersDurationMode('custom_days')}
+                      className={`py-2 px-3 rounded-lg text-xs font-semibold border transition ${
+                        shoppersDurationMode === 'custom_days'
+                          ? 'bg-yellow-500 text-slate-950 border-yellow-400'
+                          : 'bg-[#060b13] text-slate-300 border-slate-800'
+                      }`}
+                    >
+                      Specific Dates / Period
+                    </button>
+                  </div>
+
+                  {shoppersDurationMode === 'custom_days' && (
+                    <div className="space-y-2 pt-2">
+                      <p className="text-[11px] text-amber-400">Select exact booking days for personal shoppers:</p>
+                      <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto pr-1">
+                        {stayDates.map((dateStr, idx) => {
+                          const isChecked = shoppersSelectedDays.includes(dateStr);
+                          const formattedDate = new Date(dateStr).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                          });
+                          return (
+                            <button
+                              key={`shop-${dateStr}`}
+                              type="button"
+                              onClick={() => toggleCustomDay(dateStr, shoppersSelectedDays, setShoppersSelectedDays)}
+                              className={`p-2 rounded-lg text-xs font-medium border flex items-center justify-between transition ${
+                                isChecked
+                                  ? 'bg-yellow-500/20 border-yellow-400 text-yellow-300'
+                                  : 'bg-[#060b13] border-slate-800 text-slate-400 hover:border-slate-700'
+                              }`}
+                            >
+                              <span>Day {idx + 1} ({formattedDate})</span>
+                              <span className={`w-3 h-3 rounded border flex items-center justify-center text-[10px] ${isChecked ? 'bg-yellow-400 border-yellow-400 text-slate-950 font-bold' : 'border-slate-600'}`}>
+                                {isChecked ? '✓' : ''}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -1267,43 +1548,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
               </div>
             </div>
 
-            {/* Payment Gateway Selector */}
-            <div>
-              <label className="text-xs uppercase font-semibold text-slate-400 block mb-2">CHOOSE PAYMENT GATEWAY</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setGateway('paystack')}
-                  className={`py-3 rounded-xl text-xs font-mono font-bold border transition ${
-                    gateway === 'paystack'
-                      ? 'bg-yellow-500 text-slate-950 border-yellow-400'
-                      : 'bg-[#060b13] text-slate-300 border-slate-800'
-                  }`}
-                >
-                  Paystack (NGN)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setGateway('flutterwave');
-                    setCurrency('NGN');
-                  }}
-                  className={`py-3 rounded-xl text-xs font-mono font-bold border transition ${
-                    gateway === 'flutterwave'
-                      ? 'bg-yellow-500 text-slate-950 border-yellow-400'
-                      : 'bg-[#060b13] text-slate-300 border-slate-800'
-                  }`}
-                >
-                  Flutterwave (NGN)
-                </button>
-              </div>
-            </div>
-
             <button
               type="submit"
               className="w-full mt-4 bg-yellow-500 hover:bg-cyan-400 text-slate-950 font-bold py-4 rounded-xl transition-all shadow-lg shadow-cyan-500/10 uppercase tracking-wider text-xs cursor-pointer"
             >
-              Confirm & Pay {formatPrice(totals.totalDue)}
+              Checkout ({testMode ? '₦100 TEST' : formatPrice(totals.totalDue)})
             </button>
           </form>
         </div>
