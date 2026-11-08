@@ -1,9 +1,3 @@
-// ====================================================================
-// FILE 9: ROOT LAYOUT
-// PASTE INTO: app/layout.tsx
-// REPLACE the whole file. Keep SecurityGuard/ThemeProvider as they are.
-// ====================================================================
-
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -36,6 +30,9 @@ export const metadata: Metadata = {
   applicationName: SITE_NAME,
   authors: [{ name: "Sunshine Concierge Residences" }],
   creator: SITE_NAME,
+  icons: {
+    icon: "/favicon.png",
+  },
   // NOTE: no canonical here on purpose. A canonical set in the root layout is inherited by every page.
   // Each page sets its own (see the listing page and the homepage snippet).
   openGraph: {
@@ -44,7 +41,7 @@ export const metadata: Metadata = {
     siteName: SITE_NAME,
     images: [
       {
-        url: "/og-image.jpg", // make sure public/og-image.jpg exists (1200x630)
+        url: "/icon.png", // make sure public/icon.png exists (1200x630)
         width: 1200,
         height: 630,
         alt: "Sunshine Concierge luxury shortlet apartments in Lagos",
@@ -57,7 +54,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: DEFAULT_TITLE,
     description: DEFAULT_DESCRIPTION,
-    images: ["/og-image.jpg"],
+    images: ["/logo.png"],
   },
   robots: {
     index: true,
