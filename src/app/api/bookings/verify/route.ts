@@ -1,5 +1,5 @@
 // ====================================================================
-// FILE 2 OF 6: api/bookings/verify/route  (UPDATED: protected ₦100 test switch)
+// FILE 2 OF 6: api/bookings/verify/route  (UPDATED: transfer-safe verification)
 // PASTE INTO: app/api/bookings/verify/route.ts
 // REPLACE the whole existing file. Needs file 5 (lib/bookingPayments.ts) to exist.
 // ====================================================================
@@ -93,8 +93,54 @@ function sanitizeAddons(rawAddons: any): Record<string, any> {
 /**
  * Two actions on one route:
  *  - { action: 'initiate', transactionRef, bookingData } -> store a PENDING booking BEFORE the guest goes to Interswitch
- *  - { transactionRef }                                  -> verify with Interswitch, mark that stored booking PAID
+ *  - { transactionRef }                                  -> verify the payment and mark that stored booking PAID
+ *
+ * Verify responses (the success page relies on these):
+ *  200 { success, booking }            paid
+ *  202 { pending: true, code, description }  not confirmed YET (bank transfers settle late): keep polling
+ *  402 { final: true, ... }            definitively not paid (customer cancelled, or the 30-minute window is over)
+ *  404 / 5xx                           unknown: keep polling
+ *  400                                 bad reference
  */
+
+// Values our own code may have written when a booking is paid. Compared case-insensitively.
+const PAID_VALUES = new Set(['paid', 'success', 'successful', 'confirmed', 'completed']);
+// Interswitch: Z6 = customer cancelled (final). Everything else can still change until the transaction expires.
+const FINAL_FAILURE_CODES = new Set(['Z6']);
+// Interswitch transactions are valid for 30 minutes; allow a little slack for slow transfers.
+const PENDING_WINDOW_MS = 35 * 60 * 1000;
+
+function norm(v: any) {
+  return String(v ?? '').trim().toLowerCase();
+}
+
+function isPaidRow(row: any) {
+  return PAID_VALUES.has(norm(row?.paymentStatus)) || PAID_VALUES.has(norm(row?.status));
+}
+
+// Only send the browser what the receipt page needs (no platform cuts, no internal fields).
+function publicBooking(b: any) {
+  if (!b) return b;
+  return {
+    id: b.id,
+    reference: b.reference,
+    transactionRef: b.reference || b.transactionRef,
+    paymentReference: b.paymentReference,
+    listingId: b.listingId,
+    apartmentTitle: b.apartmentTitle,
+    checkIn: b.checkIn,
+    checkOut: b.checkOut,
+    totalNights: b.totalNights,
+    guestCount: b.guestCount,
+    grandTotal: b.grandTotal,
+    customerName: b.customerName,
+    customerEmail: b.customerEmail,
+    phone: b.phone,
+    status: b.status,
+    paymentStatus: b.paymentStatus,
+  };
+}
+
 export async function POST(request: Request) {
   try {
     let body: any;
@@ -111,19 +157,51 @@ export async function POST(request: Request) {
 
     if (body?.action === 'initiate') return await handleInitiate(txRef, body?.bookingData, body?.testCode);
 
-    const result = await confirmBookingByReference(txRef);
-    switch (result.status) {
+    // 1) The webhook may already have confirmed this booking (the usual case for bank transfers).
+    //    If so, do not bother Interswitch again.
+    const { data: row, error: rowError } = await supabase
+      .from('Booking')
+      .select('*')
+      .eq('reference', txRef)
+      .maybeSingle();
+    if (rowError) console.error('[Verify] lookup error:', rowError.message);
+
+    if (row && isPaidRow(row)) {
+      return NextResponse.json({ success: true, booking: publicBooking(row) }, { status: 200 });
+    }
+
+    // 2) Otherwise ask Interswitch (and mark the booking paid if it says so).
+    const result: any = await confirmBookingByReference(txRef);
+    console.log('[Verify]', { txRef, status: result?.status, code: result?.code, description: result?.description });
+
+    switch (result?.status) {
       case 'paid':
-        return NextResponse.json({ success: true, booking: result.booking }, { status: 200 });
+        return NextResponse.json({ success: true, booking: publicBooking(result.booking ?? row) }, { status: 200 });
+
       case 'not_found':
         return NextResponse.json({ error: 'No booking found for this reference', pending: true }, { status: 404 });
-      case 'not_paid':
+
+      case 'not_paid': {
+        const code = String(result.code ?? '');
+        const ageMs = row?.createdAt ? Date.now() - new Date(row.createdAt).getTime() : 0;
+        // code '00' while not paid means Interswitch approved a DIFFERENT amount: waiting won't fix it, needs a human.
+        const isFinal = FINAL_FAILURE_CODES.has(code) || code === '00' || ageMs > PENDING_WINDOW_MS;
+        if (isFinal) {
+          return NextResponse.json(
+            { error: 'Payment not verified', final: true, code, description: result.description },
+            { status: 402 }
+          );
+        }
+        // Not paid *yet*: a transfer may still be settling. Tell the page to keep checking.
         return NextResponse.json(
-          { error: 'Payment not verified', code: result.code, description: result.description },
-          { status: 402 }
+          { pending: true, code, description: result.description },
+          { status: 202 }
         );
+      }
+
       case 'provider_error':
         return NextResponse.json({ error: 'Could not reach payment provider', pending: true }, { status: 502 });
+
       default:
         return NextResponse.json({ error: 'Database error', pending: true }, { status: 500 });
     }
@@ -164,7 +242,8 @@ async function handleInitiate(txRef: string, raw: any, testCode?: string) {
   }
 
   const nights = Math.max(1, Number(totalNights) || 1);
-  const total = isTest ? TEST_TOTAL_NGN : Number(grandTotal);
+  // Round to whole kobo so the stored amount always equals what the gateway is asked to charge.
+  const total = isTest ? TEST_TOTAL_NGN : Math.round(Number(grandTotal) * 100) / 100;
   const minimumDue = listing.pricePerNight * nights;
   if (!isTest && (!Number.isFinite(total) || total < minimumDue)) {
     console.warn('[Initiate] grandTotal below accommodation minimum', { txRef, total, minimumDue });

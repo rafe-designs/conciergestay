@@ -1,5 +1,5 @@
 // ====================================================================
-// FILE 1 OF 6: CHECKOUT PAGE  (UPDATED: protected ₦100 test switch)
+// FILE 1 OF 6: CHECKOUT PAGE  (UPDATED: double-submit guard + exact charged amount)
 // PASTE INTO: app/checkout/[id]/page.tsx
 // REPLACE the whole existing file with this one.
 // ====================================================================
@@ -37,6 +37,18 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   const [testMode, setTestMode] = useState(false);
   useEffect(() => {
     setTestMode(!!new URLSearchParams(window.location.search).get('testcode'));
+  }, []);
+
+  // Guards against double-clicks creating two bookings/two references.
+  const [submitting, setSubmitting] = useState(false);
+  useEffect(() => {
+    // If the guest presses Back from the payment page, the browser may restore this page from cache
+    // with the button still locked.
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted) setSubmitting(false);
+    };
+    window.addEventListener('pageshow', onShow);
+    return () => window.removeEventListener('pageshow', onShow);
   }, []);
   const listing = LISTINGS[resolvedParams.id] || LISTINGS['new-horizon'];
 
@@ -431,6 +443,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   // Quickteller Payment & Local Storage Sync Handler
   const handlePaymentSubmission = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
 
     if (!checkInDate || !checkOutDate) {
       alert('Please select your check-in and check-out dates.');
@@ -456,6 +469,8 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       alert('There is a problem with your total. Please review your selections.');
       return;
     }
+
+    setSubmitting(true);
 
     const uniqueTxRef =
       'CS_' + Date.now() + '_' + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
@@ -514,7 +529,8 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       diningTotal: totals.diningTotal,
       conciergeTotal: totals.conciergeTotal,
       servicesTotal: totals.diningTotal + totals.conciergeTotal,
-      grandTotal: totals.totalDue,
+      // exactly what the gateway is asked to charge (whole kobo), so server verification can match it
+      grandTotal: isTest ? totals.totalDue : amountKobo / 100,
       currency: 'NGN', // the currency actually charged
       displayCurrency: currency, // what the guest was viewing
       createdAt: new Date().toISOString(),
@@ -546,6 +562,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     if (!merchantCode || !payItemId) {
       alert('Payment is not configured. Please contact support.');
       console.error('Missing NEXT_PUBLIC_QUICKTELLER_MERCHANT_CODE or NEXT_PUBLIC_QUICKTELLER_PAY_ITEM_ID');
+      setSubmitting(false);
       return;
     }
 
@@ -561,11 +578,13 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
         const err = await initRes.json().catch(() => ({}));
         console.error('Could not start booking:', err);
         alert('We could not start your booking. Please try again.');
+        setSubmitting(false);
         return;
       }
     } catch (err) {
       console.error('Could not start booking:', err);
       alert('Network problem. Please check your connection and try again.');
+      setSubmitting(false);
       return;
     }
 
@@ -1550,9 +1569,12 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
 
             <button
               type="submit"
-              className="w-full mt-4 bg-yellow-500 hover:bg-cyan-400 text-slate-950 font-bold py-4 rounded-xl transition-all shadow-lg shadow-cyan-500/10 uppercase tracking-wider text-xs cursor-pointer"
+              disabled={submitting}
+              className="w-full mt-4 bg-yellow-500 hover:bg-cyan-400 text-slate-950 font-bold py-4 rounded-xl transition-all shadow-lg shadow-cyan-500/10 uppercase tracking-wider text-xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Checkout ({testMode ? '₦100 TEST' : formatPrice(totals.totalDue)})
+              {submitting
+                ? 'Redirecting to payment...'
+                : `Checkout (${testMode ? '₦100 TEST' : formatPrice(totals.totalDue)})`}
             </button>
           </form>
         </div>

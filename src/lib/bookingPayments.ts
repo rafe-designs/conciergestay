@@ -1,5 +1,5 @@
 // ====================================================================
-// FILE 5 OF 6: lib/bookingPayments (NEW FILE)
+// FILE 5 OF 6: lib/bookingPayments (UPDATED: one mode switch, loud failures, better logs)
 // PASTE INTO: lib/bookingPayments.ts
 // CREATE this new file (use src/lib/ if your project has a src folder, next to cateringData.ts).
 // ====================================================================
@@ -17,8 +17,11 @@ export const supabase = createClient(
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-const IS_LIVE = (process.env.QUICKTELLER_ENV || process.env.NEXT_PUBLIC_QUICKTELLER_MODE) === 'LIVE';
-const INTERSWITCH_BASE = IS_LIVE ? 'https://webpay.interswitchng.com' : 'https://sandbox.interswitchng.com';
+// Same switch the checkout page uses (NEXT_PUBLIC_QUICKTELLER_MODE) so the payment and its verification
+// can never point at different environments. QUICKTELLER_ENV is only a fallback when that is unset.
+const MODE = (process.env.NEXT_PUBLIC_QUICKTELLER_MODE || process.env.QUICKTELLER_ENV || '').trim().toUpperCase();
+const IS_LIVE = MODE === 'LIVE';
+const INTERSWITCH_BASE = IS_LIVE ? 'https://webpay.interswitchng.com' : 'https://qa.interswitchng.com';
 
 const escapeHtml = (v: unknown) =>
   String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
@@ -30,7 +33,7 @@ export async function verifyWithInterswitch(txRef: string, amountKobo: number) {
   if (!merchantCode) throw new Error('NEXT_PUBLIC_QUICKTELLER_MERCHANT_CODE is not set');
 
   const url =
-    `${INTERSWITCH_BASE}/collections/api/v1/gettransaction` +
+    `${INTERSWITCH_BASE}/collections/api/v1/gettransaction.json` +
     `?merchantcode=${encodeURIComponent(merchantCode)}` +
     `&transactionreference=${encodeURIComponent(txRef)}` +
     `&amount=${amountKobo}`;
@@ -53,20 +56,40 @@ export async function verifyWithInterswitch(txRef: string, amountKobo: number) {
 
   let { res, text, data } = await attempt(url);
   if (!data || res.status === 404) {
-    ({ res, text, data } = await attempt(url.replace('/gettransaction?', '/gettransaction.json?')));
+    ({ res, text, data } = await attempt(url.replace('/gettransaction.json?', '/gettransaction?')));
   }
   data = data || {};
 
-  console.log('[Interswitch verify]', res.status, text.slice(0, 500));
+  console.log('[Interswitch verify]', {
+    mode: IS_LIVE ? 'LIVE' : 'TEST',
+    base: INTERSWITCH_BASE,
+    txRef,
+    amountKobo,
+    http: res.status,
+    body: text.slice(0, 500),
+  });
 
   const code = String(data?.ResponseCode ?? data?.responseCode ?? '');
   const returnedAmount = Number(data?.Amount ?? data?.amount);
 
+  // No response code at all = we did not get a real answer (HTML error page, auth/hash rejected, outage).
+  // That is "could not check", NOT "not paid", so callers retry instead of declaring failure.
+  if (!code) throw new Error(`Interswitch returned no ResponseCode (HTTP ${res.status})`);
+
+  const approved = code === '00';
+  const amountMatches = returnedAmount === amountKobo;
+  if (approved && !amountMatches) {
+    console.error('[Interswitch verify] APPROVED BUT AMOUNT MISMATCH', { txRef, expected: amountKobo, got: returnedAmount });
+  }
+
   return {
     // Strict: approved AND the exact amount we stored. A missing/zero amount is NOT accepted.
-    paid: code === '00' && returnedAmount === amountKobo,
+    paid: approved && amountMatches,
     code,
-    description: data?.ResponseDescription ?? data?.responseDescription,
+    description:
+      approved && !amountMatches
+        ? `Approved but amount mismatch (expected ${amountKobo}, got ${returnedAmount})`
+        : data?.ResponseDescription ?? data?.responseDescription,
   };
 }
 
