@@ -7,6 +7,13 @@
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
 import crypto from 'crypto';
+import {
+  CULINARY_MEALS,
+  SOUP_OPTIONS,
+  SPICED_COMFORT_OPTIONS,
+  PROTEIN_OPTIONS,
+  SWALLOW_OPTIONS,
+} from '@/lib/cateringData';
 
 // Server-only. Save as: lib/bookingPayments.ts
 
@@ -146,31 +153,119 @@ export async function confirmBookingByReference(txRef: string): Promise<ConfirmR
   return { status: 'paid', booking: updated, newlyConfirmed: true };
 }
 
+// ---------- email formatting helpers ----------
+const humanize = (id: unknown) =>
+  String(id ?? '').replace(/[-_]+/g, ' ').trim().replace(/\b\w/g, (c) => c.toUpperCase());
+
+// id -> display name, taken from the same catalogue the checkout uses (falls back to a prettified id).
+function buildLabelMap(): Record<string, string> {
+  const map: Record<string, string> = {};
+  const add = (item: any) => {
+    if (item?.id) map[item.id] = String(item.name ?? item.title ?? item.label ?? humanize(item.id));
+  };
+  try {
+    Object.values((CULINARY_MEALS || {}) as Record<string, any[]>).forEach((cat) => (cat || []).forEach(add));
+    [SOUP_OPTIONS, SPICED_COMFORT_OPTIONS, PROTEIN_OPTIONS, SWALLOW_OPTIONS].forEach((list: any) =>
+      (Array.isArray(list) ? list : []).forEach(add)
+    );
+  } catch {
+    /* catalogue shape differs: fall back to prettified ids */
+  }
+  return map;
+}
+
+const formatDay = (d: string) => {
+  const t = new Date(d + 'T00:00:00Z');
+  return isNaN(t.getTime())
+    ? d
+    : t.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+};
+
+const formatStayDate = (v: unknown) => {
+  const t = new Date(String(v ?? ''));
+  return isNaN(t.getTime()) ? '' : t.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+};
+
+function buildMealsHtml(selections: any): string {
+  const labels = buildLabelMap();
+  const label = (id: string) => labels[id] || humanize(id);
+  const byDate: Record<string, string[]> = {};
+
+  const collect = (group: any) => {
+    if (!group || typeof group !== 'object') return;
+    Object.entries(group as Record<string, any>).forEach(([date, items]) => {
+      Object.entries((items || {}) as Record<string, any>).forEach(([id, d]: [string, any]) => {
+        const liters = Number(d?.liters ?? d?.qty ?? 0);
+        if (!liters) return;
+        let line = `${label(id)} - ${liters} L`;
+        if (d?.swallow) line += ` with ${label(String(d.swallow))}`;
+        const prots = Array.isArray(d?.proteins) ? d.proteins.filter((p: any) => p?.qty > 0) : [];
+        if (prots.length) line += ` (+ ${prots.map((p: any) => `${label(String(p.id))} x${p.qty}`).join(', ')})`;
+        (byDate[date] = byDate[date] || []).push(line);
+      });
+    });
+  };
+  collect(selections?.meals);
+  collect(selections?.soups);
+
+  return Object.keys(byDate)
+    .sort()
+    .map(
+      (date) =>
+        `<h4 style="color:#fbbf24;margin:10px 0 4px;">${escapeHtml(formatDay(date))}</h4><ul>` +
+        byDate[date].map((l) => `<li>${escapeHtml(l)}</li>`).join('') +
+        `</ul>`
+    )
+    .join('');
+}
+
+// Only services the guest actually chose, in plain English (no raw JSON, no "no" values).
+function buildAddonLines(addons: any): string[] {
+  const a = addons && typeof addons === 'object' ? addons : {};
+  const has = (v: unknown) => !!v && !['none', 'no', 'false', '0', ''].includes(String(v).trim().toLowerCase());
+  const lines: string[] = [];
+
+  if (has(a.airport)) lines.push(`Airport transfer: ${a.airport}`);
+  if (has(a.chauffeur)) lines.push(`Chauffeur: ${a.chauffeur}`);
+  if (has(a.security)) lines.push(`Security: ${a.security}`);
+  if (has(a.shopper)) lines.push(`Personal shopper: ${a.shopper}`);
+
+  const l = a.laundry;
+  if (l && typeof l === 'object') {
+    const parts = [
+      Number(l.adult) > 0 ? `${l.adult} adult` : '',
+      Number(l.kid) > 0 ? `${l.kid} kids` : '',
+      Number(l.suit) > 0 ? `${l.suit} suit` : '',
+    ].filter(Boolean);
+    if (parts.length) lines.push(`Laundry: ${parts.join(', ')}`);
+  }
+
+  if (has(a.housekeeping)) {
+    lines.push(`Housekeeping: ${String(a.housekeepingSchedule) === 'every_2_days' ? 'every 2 days' : 'daily'}`);
+  }
+
+  const b = a.beddings;
+  if (b && typeof b === 'object') {
+    if (String(b.beddings).toLowerCase() === 'yes') lines.push('Fresh beddings: changed daily');
+    if (String(b.towels).toLowerCase() === 'yes') lines.push('Fresh luxury towels: daily');
+  }
+  return lines;
+}
+
 export async function sendConfirmationEmail(b: any) {
   try {
     if (!b.customerEmail) return;
 
-    let mealsHtml = '';
-    const meals = b.dailyMealSelections?.meals;
-    if (meals && typeof meals === 'object') {
-      Object.entries(meals as Record<string, any>).forEach(([date, dayMeals]) => {
-        const items = Object.entries(dayMeals as Record<string, any>);
-        if (!items.length) return;
-        mealsHtml += `<h4 style="color:#fbbf24;margin:10px 0 4px;">${escapeHtml(date)}</h4><ul>`;
-        items.forEach(([mealId, d]: [string, any]) => {
-          mealsHtml += `<li><strong>${escapeHtml(mealId)}</strong> - ${escapeHtml(d?.liters ?? d?.qty ?? 1)} L/portions</li>`;
-        });
-        mealsHtml += `</ul>`;
-      });
-    }
+    const mealsHtml = buildMealsHtml(b.dailyMealSelections);
 
-    const addons = b.addons && typeof b.addons === 'object' ? b.addons : {};
-    let addonsHtml = '<p>No additional concierge services selected.</p>';
-    if (Object.keys(addons).length > 0) {
-      addonsHtml = '<ul>' + Object.entries(addons).map(([k, v]) =>
-        `<li><strong>${escapeHtml(k)}:</strong> ${escapeHtml(typeof v === 'object' ? JSON.stringify(v) : v)}</li>`
-      ).join('') + '</ul>';
-    }
+    const addonLines = buildAddonLines(b.addons);
+    const addonsHtml = addonLines.length
+      ? '<ul>' + addonLines.map((l) => `<li>${escapeHtml(l)}</li>`).join('') + '</ul>'
+      : '<p>No additional concierge services selected.</p>';
+
+    const checkInLabel = formatStayDate(b.checkIn);
+    const checkOutLabel = formatStayDate(b.checkOut);
+    const customerName = String(b.customerName || '').trim() || 'Valued Guest';
 
     await resend.emails.send({
       // Until your domain is verified in Resend, use onboarding@resend.dev
@@ -181,11 +276,13 @@ export async function sendConfirmationEmail(b: any) {
       html: `
         <div style="font-family:sans-serif;background:#060b13;color:#f8fafc;padding:24px;border-radius:12px;">
           <h2 style="color:#fbbf24;border-bottom:1px solid #334155;padding-bottom:12px;">Reservation Confirmed!</h2>
-          <p>Hello <strong>${escapeHtml(b.customerName || 'Valued Guest')}</strong>,</p>
+          <p>Hello <strong>${escapeHtml(customerName)}</strong>,</p>
           <p>Your payment has been verified and your reservation is secured.</p>
           <div style="background:#0b121e;padding:16px;border-radius:8px;margin:16px 0;border:1px solid #1e293b;">
             <h3 style="color:#fbbf24;margin-top:0;">Stay Details</h3>
             <p><strong>Apartment:</strong> ${escapeHtml(b.apartmentTitle || 'N/A')}</p>
+            ${checkInLabel ? `<p><strong>Check-in:</strong> ${escapeHtml(checkInLabel)}</p>` : ''}
+            ${checkOutLabel ? `<p><strong>Check-out:</strong> ${escapeHtml(checkOutLabel)}</p>` : ''}
             <p><strong>Duration:</strong> ${escapeHtml(b.totalNights)} Night(s)</p>
             <p><strong>Reference ID:</strong> ${escapeHtml(b.reference)}</p>
           </div>

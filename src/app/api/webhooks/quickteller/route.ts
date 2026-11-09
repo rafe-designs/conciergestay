@@ -53,14 +53,16 @@ export async function POST(request: Request) {
     // carry on (a wrong secret must never silently block real payments). Set
     // QUICKTELLER_ENFORCE_WEBHOOK_SIGNATURE=true once you have confirmed the secret is right to reject them.
     const signature = request.headers.get('x-interswitch-signature');
-    const secret = process.env.QUICKTELLER_CLIENT_SECRET;
+    // The webhook's own secret key (shown on Quickteller Business > Developer Tools > Webhooks).
+    // It is NOT necessarily the same as your API client secret.
+    const secret = process.env.QUICKTELLER_WEBHOOK_SECRET || process.env.QUICKTELLER_CLIENT_SECRET;
     if (signature && secret) {
       const computed = crypto.createHmac('sha512', secret).update(rawBody).digest('hex');
       const a = Buffer.from(computed.toLowerCase());
       const b = Buffer.from(signature.toLowerCase());
       const valid = a.length === b.length && crypto.timingSafeEqual(a, b);
       if (!valid) {
-        console.warn('[Webhook] Signature mismatch (check QUICKTELLER_CLIENT_SECRET is the LIVE secret)');
+        console.warn('[Webhook] Signature mismatch (check QUICKTELLER_WEBHOOK_SECRET matches the secret shown on the Quickteller webhook page)');
         if (process.env.QUICKTELLER_ENFORCE_WEBHOOK_SIGNATURE === 'true') {
           return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
         }

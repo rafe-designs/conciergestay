@@ -76,13 +76,18 @@ function sanitizeAddons(rawAddons: any): Record<string, any> {
     };
   }
 
-  sanitized.beddings = {
-    towels: String(beddingsObj.towels || 'no').slice(0, 20),
-    beddings: String(beddingsObj.beddings || 'no').slice(0, 20),
-    selection: String(beddingsObj.selection || 'Standard').slice(0, 50),
-  };
+  // Only record bedding/towel service when the guest actually chose it (it used to be saved as "no"/"no" every time).
+  const wantsBeddings = String(beddingsObj.beddings || 'no').toLowerCase() === 'yes';
+  const wantsTowels = String(beddingsObj.towels || 'no').toLowerCase() === 'yes';
+  if (wantsBeddings || wantsTowels) {
+    sanitized.beddings = {
+      towels: wantsTowels ? 'yes' : 'no',
+      beddings: wantsBeddings ? 'yes' : 'no',
+      selection: String(beddingsObj.selection || 'Standard').slice(0, 50),
+    };
+  }
 
-  const shopper = rawAddons.shopper || rawAddons.personalShopper;
+  const shopper = rawAddons.shopper || rawAddons.personalShopper || rawAddons.shoppersService;
   if (shopper && !['None', 'false'].includes(String(shopper))) {
     sanitized.shopper = String(shopper).slice(0, 100);
   }
@@ -282,7 +287,7 @@ async function handleInitiate(txRef: string, raw: any, testCode?: string) {
     platformFeeTotal: 0,
     status: 'Pending',
     paymentStatus: 'Pending',
-    customerName: String(guestInfo?.fullName || '').slice(0, 150),
+    customerName: String(guestInfo?.fullName || '').trim().slice(0, 150),
     customerEmail: email,
     phone: String(guestInfo?.phone || '').slice(0, 50),
     apartmentTitle: ((isTest ? '[TEST] ' : '') + String(apartmentTitle || listing.title || '')).slice(0, 200),
