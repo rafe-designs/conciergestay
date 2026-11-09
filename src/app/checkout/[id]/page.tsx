@@ -1,5 +1,5 @@
 // ====================================================================
-// FILE 1: app/checkout/[id]/page.tsx (Complete Paystack Checkout)
+// FILE 1: app/checkout/[id]/page.tsx (Paystack Checkout with SC_ Prefix)
 // ====================================================================
 
 'use client';
@@ -263,7 +263,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     setDailySoups({ ...dailySoups, [date]: { ...daySoups, [soupId]: { ...current, proteins: updated } } });
   };
 
-  // Paystack Payment Handler
+  // Paystack Payment Handler (Updated with SC_ prefix)
   const handlePaymentSubmission = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
@@ -280,7 +280,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     }
 
     setSubmitting(true);
-    const uniqueTxRef = 'PSTK_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+    const uniqueTxRef = 'SC_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
 
     let formattedAirportTransfer = 'None';
     if (airportTransferType !== 'none') {
