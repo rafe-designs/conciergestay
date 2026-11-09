@@ -27,7 +27,9 @@ export default function HomePage() {
     email: '',
     phone: '',
     message: '',
+    company: '', // honeypot: hidden from people, bots fill it in
   });
+  const [errorMessage, setErrorMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
@@ -102,6 +104,7 @@ export default function HomePage() {
     e.preventDefault();
     setIsSubmitting(true);
     setSubmitStatus('idle');
+    setErrorMessage('');
 
     try {
       const res = await fetch('/api/contact', {
@@ -112,8 +115,11 @@ export default function HomePage() {
 
       if (res.ok) {
         setSubmitStatus('success');
-        setContactForm({ name: '', email: '', phone: '', message: '' });
+        setContactForm({ name: '', email: '', phone: '', message: '', company: '' });
       } else {
+        // Show the server's reason (e.g. invalid email, too many attempts) when it sends one.
+        const data = await res.json().catch(() => ({}));
+        setErrorMessage(typeof data?.error === 'string' ? data.error : '');
         setSubmitStatus('error');
       }
     } catch (error) {
@@ -280,7 +286,7 @@ export default function HomePage() {
             {submitStatus === 'error' && (
               <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-500/40 text-rose-300 text-xs font-mono flex items-center gap-3">
                 <AlertCircle className="h-5 w-5 shrink-0 text-rose-400" />
-                <span>Failed to dispatch inquiry. Please check your network or try again later.</span>
+                <span>{errorMessage || 'Failed to dispatch inquiry. Please check your network or try again later.'}</span>
               </div>
             )}
 
@@ -292,9 +298,10 @@ export default function HomePage() {
                     type="text"
                     required
                     placeholder="John Doe"
+                    maxLength={100}
                     value={contactForm.name}
                     onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-yellow-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 select-text focus:outline-none focus:border-yellow-500"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -303,9 +310,10 @@ export default function HomePage() {
                     type="email"
                     required
                     placeholder="john@example.com"
+                    maxLength={150}
                     value={contactForm.email}
                     onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-yellow-500"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 select-text focus:outline-none focus:border-yellow-500"
                   />
                 </div>
               </div>
@@ -315,9 +323,10 @@ export default function HomePage() {
                 <input
                   type="tel"
                   placeholder="+234 800 000 0000"
+                  maxLength={30}
                   value={contactForm.phone}
                   onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-yellow-500"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 select-text focus:outline-none focus:border-yellow-500"
                 />
               </div>
 
@@ -326,11 +335,26 @@ export default function HomePage() {
                 <textarea
                   required
                   rows={4}
+                  maxLength={3000}
                   placeholder="Detail your requirements, dates, or specific concierge preferences..."
                   value={contactForm.message}
                   onChange={(e) => setContactForm({ ...contactForm, message: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-yellow-500 resize-none"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 select-text focus:outline-none focus:border-yellow-500 resize-none"
                 />
+              </div>
+
+              {/* Honeypot: off-screen and skipped by keyboard/screen readers. Real visitors never touch it. */}
+              <div aria-hidden="true" className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
+                <label>
+                  Company
+                  <input
+                    type="text"
+                    tabIndex={-1}
+                    autoComplete="off"
+                    value={contactForm.company}
+                    onChange={(e) => setContactForm({ ...contactForm, company: e.target.value })}
+                  />
+                </label>
               </div>
 
               <button
