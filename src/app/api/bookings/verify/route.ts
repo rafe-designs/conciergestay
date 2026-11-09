@@ -1,7 +1,7 @@
 // ====================================================================
 // FILE: src/app/api/bookings/verify/route.ts
-// Fully updated route with clean conditional parsing for Meals & Add-ons,
-// SC_ reference standardizing, and distinct Guest vs. Admin emails via Resend.
+// Fully updated route with dynamic night calculation, conditional meals/addons,
+// SC_ reference sanitization, and distinct Guest vs. Admin emails via Resend.
 // ====================================================================
 
 import { NextResponse } from 'next/server';
@@ -30,6 +30,16 @@ const sanitizeReference = (ref: string): string => {
   }
   return clean;
 };
+
+// Robust dynamic night calculation helper
+function calculateNights(checkIn: string, checkOut: string, fallbackNights: number): number {
+  if (!checkIn || !checkOut) return Math.max(1, fallbackNights || 1);
+  const start = new Date(checkIn);
+  const end = new Date(checkOut);
+  const diffTime = end.getTime() - start.getTime();
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays > 0 ? diffDays : Math.max(1, fallbackNights || 1);
+}
 
 // ====================================================================
 // CONDITIONAL PARSERS (Renders HTML ONLY if items were selected)
@@ -155,6 +165,9 @@ async function dispatchBookingEmails(booking: any, rawPayload: any) {
     const adminEmail = process.env.CONTACT_TO_EMAIL || 'info@sunshineconcierge.org';
     const fromEmail = process.env.RESEND_FROM_EMAIL || 'Concierge Stay <bookings@sunshineconcierge.org>';
 
+    const nightsCount = calculateNights(booking.checkIn, booking.checkOut, booking.totalNights);
+    const nightsLabel = `${nightsCount} Night${nightsCount > 1 ? 's' : ''}`;
+
     const mealsSection = parseMealSelectionsHtml(rawPayload?.dailyMealSelections);
     const addonsSection = parseAddonsHtml(rawPayload?.addons);
 
@@ -169,7 +182,7 @@ async function dispatchBookingEmails(booking: any, rawPayload: any) {
           <div style="background:#0b121e;padding:16px;border-radius:10px;margin:20px 0;border:1px solid #1e293b;font-size:13px;line-height:1.6;">
             <p style="margin:4px 0;"><strong>Reference:</strong> <span style="color:#fbbf24;font-family:monospace;font-weight:bold;">${escapeHtml(booking.reference)}</span></p>
             <p style="margin:4px 0;"><strong>Check-In:</strong> ${new Date(booking.checkIn).toLocaleDateString()}</p>
-            <p style="margin:4px 0;"><strong>Check-Out:</strong> ${new Date(booking.checkOut).toLocaleDateString()} (${booking.totalNights} Night/s)</p>
+            <p style="margin:4px 0;"><strong>Check-Out:</strong> ${new Date(booking.checkOut).toLocaleDateString()} (${nightsLabel})</p>
           </div>
 
           ${mealsSection}
@@ -201,7 +214,7 @@ async function dispatchBookingEmails(booking: any, rawPayload: any) {
           <p style="margin:4px 0;font-size:13px;"><strong>Email:</strong> ${escapeHtml(booking.customerEmail)}</p>
           <p style="margin:4px 0;font-size:13px;"><strong>Phone:</strong> ${escapeHtml(booking.phone || 'N/A')}</p>
           <p style="margin:4px 0;font-size:13px;"><strong>Residence:</strong> ${escapeHtml(booking.apartmentTitle)}</p>
-          <p style="margin:4px 0;font-size:13px;"><strong>Dates:</strong> ${new Date(booking.checkIn).toLocaleDateString()} to ${new Date(booking.checkOut).toLocaleDateString()} (${booking.totalNights} Nights)</p>
+          <p style="margin:4px 0;font-size:13px;"><strong>Dates:</strong> ${new Date(booking.checkIn).toLocaleDateString()} to ${new Date(booking.checkOut).toLocaleDateString()} (${nightsLabel})</p>
         </div>
 
         <div style="background:#131c2e;padding:16px;border-radius:10px;margin-bottom:16px;border:1px solid #1e293b;">
@@ -254,7 +267,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing transaction reference' }, { status: 400 });
     }
 
-    const nights = Number(raw?.totalNights ?? raw?.nights ?? 1);
+    const checkInDate = raw?.checkIn;
+    const checkOutDate = raw?.checkOut;
+    const nights = calculateNights(checkInDate, checkOutDate, Number(raw?.totalNights ?? raw?.nights ?? 1));
+
     const baseRent = Number(raw?.baseRentTotal ?? raw?.stayCost ?? 0);
     const services = Number(raw?.servicesTotal ?? raw?.diningTotal ?? raw?.totalConciergePrice ?? 0);
     const grandTot = Number(raw?.grandTotal ?? (baseRent + services) ?? 0);
@@ -285,11 +301,11 @@ export async function POST(request: Request) {
         servicesCut: servCut,
         apartmentTitle: aptTitle,
         listingId: listId,
-        totalNights: nights > 0 ? nights : 1,
+        totalNights: nights,
         status: 'Pending',
         paymentStatus: 'Pending',
-        checkIn: raw?.checkIn ? new Date(raw.checkIn).toISOString() : nowIso,
-        checkOut: raw?.checkOut ? new Date(raw.checkOut).toISOString() : nowIso,
+        checkIn: checkInDate ? new Date(checkInDate).toISOString() : nowIso,
+        checkOut: checkOutDate ? new Date(checkOutDate).toISOString() : nowIso,
         createdAt: nowIso,
         updatedAt: nowIso,
       };
@@ -358,7 +374,7 @@ export async function POST(request: Request) {
       paymentStatus: 'Paid',
       paymentReference: String(paystackTx.id || txRef),
       grandTotal: grandTot > 0 ? grandTot : verifiedAmount,
-      totalNights: nights > 0 ? nights : 1,
+      totalNights: nights,
       apartmentCut: aptCut,
       platformFee: platFee,
       servicesCut: servCut,
@@ -387,7 +403,7 @@ export async function POST(request: Request) {
         grandTotal: grandTot > 0 ? grandTot : verifiedAmount,
         apartmentTitle: aptTitle,
         listingId: listId,
-        totalNights: nights > 0 ? nights : 1,
+        totalNights: nights,
         baseRentTotal: baseRent,
         servicesTotal: services,
         apartmentCut: aptCut,
@@ -395,8 +411,8 @@ export async function POST(request: Request) {
         servicesCut: servCut,
         status: 'Confirmed',
         paymentStatus: 'Paid',
-        checkIn: nowIso,
-        checkOut: nowIso,
+        checkIn: checkInDate ? new Date(checkInDate).toISOString() : nowIso,
+        checkOut: checkOutDate ? new Date(checkOutDate).toISOString() : nowIso,
         createdAt: nowIso,
         updatedAt: nowIso,
       };
