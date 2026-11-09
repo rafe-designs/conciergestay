@@ -65,18 +65,6 @@ const DEPARTMENT_CONFIGS: DeptConfig[] = [
   { id: 'shopper', label: '🛒 Personal Shopper', name: 'Personal Shopper', color: 'text-pink-400', barBg: 'bg-pink-500', keywords: ['shopper'] }
 ];
 
-const normalizeKitchenBookings = (items: Booking[]) =>
-  items.map((booking) => ({
-    ...booking,
-    id: booking.id ?? booking.reference ?? booking.paymentReference ?? `booking-${Math.random().toString(36).slice(2, 10)}`,
-    listingId: booking.listingId ?? 'N/A',
-    checkIn: booking.checkIn ?? '',
-    checkOut: booking.checkOut ?? '',
-    status: booking.status ?? 'Confirmed',
-    customerName: booking.customerName ?? booking.guestName ?? 'Guest',
-    phone: booking.phone ?? booking.phoneNumber ?? '',
-  }));
-
 // --- UTILITY FUNCTIONS ---
 const parseJson = (data: any): any => {
   if (!data) return {};
@@ -133,7 +121,6 @@ const getDishUnitPrice = (dishName: string): number => {
   return 45000;
 };
 
-// Kitchen parsing and cost calculation
 const parseKitchenDetailsAndCost = (booking: Booking): { names: string[]; totalCost: number } => {
   const dbStoredTotal = extractNumber(
     booking?.servicesTotal || 
@@ -780,6 +767,30 @@ function OverviewTab({ filteredBookings, selectedDate, searchQuery, setSearchQue
                 <span className={`font-mono font-bold ${dept.color}`}>₦{dept.revenue.toLocaleString()}</span>
               </div>
               <div className="w-full bg-gray-800 rounded-full h-1.5"><div className={`h-1.5 rounded-full ${dept.barBg}`} style={{ width: `${totalRevenue > 0 ? (dept.revenue / totalRevenue) * 100 : 0}%` }}></div></div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* --- ADDED: Recent Bookings Stream (Ensures all bookings appear in overview) --- */}
+      <div className="space-y-4 pt-4 border-t border-gray-800">
+        <h3 className="text-sm font-bold uppercase tracking-wider text-cyan-400">Recent Bookings Stream</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {filteredBookings.map((b: any, idx: number) => (
+            <div key={b.id || idx} className="p-4 rounded-xl bg-gray-950 border border-gray-800 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-cyan-950 text-cyan-300 border border-cyan-800">{b?.listingId || 'Suite'}</span>
+                <span className="text-[11px] text-emerald-400 font-semibold">{b?.status || 'Confirmed'}</span>
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-white">{b?.customerName || 'Guest'}</h4>
+                <p className="text-[11px] text-amber-400 font-mono">📞 {b?.phone || 'N/A'}</p>
+                <p className="text-[11px] text-gray-400 font-mono">Ref: {b?.paymentReference || b?.id}</p>
+              </div>
+              <div className="pt-2 border-t border-gray-900 flex justify-between text-[11px]">
+                <span className="text-gray-400">Total:</span>
+                <span className="text-cyan-400 font-mono font-bold">₦{Number(b?.grandTotal || 0).toLocaleString()}</span>
+              </div>
             </div>
           ))}
         </div>

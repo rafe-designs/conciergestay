@@ -1,7 +1,5 @@
 // ====================================================================
-// FILE 1 OF 6: CHECKOUT PAGE  (UPDATED: double-submit guard + exact charged amount)
-// PASTE INTO: app/checkout/[id]/page.tsx
-// REPLACE the whole existing file with this one.
+// FILE 1: app/checkout/[id]/page.tsx (Complete Paystack Checkout)
 // ====================================================================
 
 'use client';
@@ -19,12 +17,6 @@ import {
   MealItem,
 } from '@/lib/cateringData';
 
-const IS_LIVE = process.env.NEXT_PUBLIC_QUICKTELLER_MODE === 'LIVE';
-// Web Redirect gateway page (inline popup is not used: it renders blank on the sandbox).
-const QT_PAY_URL = IS_LIVE
-  ? 'https://newwebpay.interswitchng.com/collections/w/pay'
-  : 'https://newwebpay-sandbox.interswitchng.com/collections/w/pay';
-
 interface CheckoutPageProps {
   params: Promise<{ id: string }>;
 }
@@ -33,29 +25,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   const resolvedParams = use(params);
   const router = useRouter();
 
-  // Protected test mode: only active when the URL has ?testcode=... (the code is checked on the server).
-  const [testMode, setTestMode] = useState(false);
-  useEffect(() => {
-    setTestMode(!!new URLSearchParams(window.location.search).get('testcode'));
-  }, []);
-
-  // Guards against double-clicks creating two bookings/two references.
   const [submitting, setSubmitting] = useState(false);
-  useEffect(() => {
-    // If the guest presses Back from the payment page, the browser may restore this page from cache
-    // with the button still locked.
-    const onShow = (e: PageTransitionEvent) => {
-      if (e.persisted) setSubmitting(false);
-    };
-    window.addEventListener('pageshow', onShow);
-    return () => window.removeEventListener('pageshow', onShow);
-  }, []);
   const listing = LISTINGS[resolvedParams.id] || LISTINGS['new-horizon'];
 
   // Currency State
   const [currency, setCurrency] = useState<'NGN' | 'USD' | 'GBP' | 'EUR'>('NGN');
-
-  // Real-time Dynamic Exchange Rates State (1 Unit of Foreign Currency = X Naira)
   const [exchangeRates, setExchangeRates] = useState<Record<string, { rate: number; symbol: string }>>({
     NGN: { rate: 1, symbol: '₦' },
     USD: { rate: 1331, symbol: '$' },
@@ -63,7 +37,6 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     EUR: { rate: 1450, symbol: '€' },
   });
 
-  // Fetch live exchange rates on component mount
   useEffect(() => {
     async function fetchLiveRates() {
       try {
@@ -73,25 +46,21 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
           const usdToNgn = data.rates.NGN || 1331;
           const usdToGbp = data.rates.GBP || 0.78;
           const usdToEur = data.rates.EUR || 0.92;
-
-          const ngnPerGbp = usdToGbp > 0 ? usdToNgn / usdToGbp : 1750;
-          const ngnPerEur = usdToEur > 0 ? usdToNgn / usdToEur : 1450;
-
           setExchangeRates({
             NGN: { rate: 1, symbol: '₦' },
             USD: { rate: usdToNgn, symbol: '$' },
-            GBP: { rate: ngnPerGbp, symbol: '£' },
-            EUR: { rate: ngnPerEur, symbol: '€' },
+            GBP: { rate: usdToNgn / usdToGbp, symbol: '£' },
+            EUR: { rate: usdToNgn / usdToEur, symbol: '€' },
           });
         }
       } catch (err) {
-        console.warn('Failed to fetch live exchange rates, using fallback rates:', err);
+        console.warn('Failed to fetch live exchange rates:', err);
       }
     }
     fetchLiveRates();
   }, []);
 
-  // 1. Stay & Guest Info
+  // Stay & Guest Info
   const [checkInDate, setCheckInDate] = useState('');
   const [checkOutDate, setCheckOutDate] = useState('');
   const [fullName, setFullName] = useState('');
@@ -99,10 +68,7 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   const [phone, setPhone] = useState('');
   const [guests, setGuests] = useState(1);
 
-  // Active selected day tab for daily meal picker
   const [selectedDayTab, setSelectedDayTab] = useState<string>('');
-
-  // 2. Per-Day Catering & Food State
   const [activeTab, setActiveTab] = useState<'rice' | 'breakfast' | 'dinner' | 'soups' | 'spiced_comforts'>('rice');
 
   const [dailyMeals, setDailyMeals] = useState<
@@ -113,23 +79,18 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     Record<string, Record<string, { liters: number; swallow: string; proteins: { id: string; qty: number }[] }>>
   >({});
 
-  // 3. Concierge Add-On States
   const [airportTransferType, setAirportTransferType] = useState('none');
   const [airportTripDirection, setAirportTripDirection] = useState<'one_way_pickup' | 'one_way_dropoff' | 'round_trip'>('one_way_pickup');
-  
   const [chauffeurService, setChauffeurService] = useState('none');
   const [chauffeurDurationMode, setChauffeurDurationMode] = useState<'entire_stay' | 'custom_days'>('entire_stay');
   const [chauffeurSelectedDays, setChauffeurSelectedDays] = useState<string[]>([]);
-
   const [securityService, setSecurityService] = useState('none');
   const [securityCount, setSecurityCount] = useState(1);
   const [securityDurationMode, setSecurityDurationMode] = useState<'entire_stay' | 'custom_days'>('entire_stay');
   const [securitySelectedDays, setSecuritySelectedDays] = useState<string[]>([]);
-
   const [shoppersCount, setShoppersCount] = useState(0);
   const [shoppersDurationMode, setShoppersDurationMode] = useState<'entire_stay' | 'custom_days'>('entire_stay');
   const [shoppersSelectedDays, setShoppersSelectedDays] = useState<string[]>([]);
-
   const [laundryAdult, setLaundryAdult] = useState('0');
   const [laundryKid, setLaundryKid] = useState('0');
   const [laundrySuit, setLaundrySuit] = useState('0');
@@ -138,17 +99,12 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   const [beddingBeddings, setBeddingBeddings] = useState('no');
   const [beddingTowels, setBeddingTowels] = useState('no');
 
-  // Generate Array of Stay Dates
   const stayDates = useMemo(() => {
     if (!checkInDate || !checkOutDate) return [];
     const dates: string[] = [];
     const start = new Date(checkInDate + 'T00:00:00Z');
     const end = new Date(checkOutDate + 'T00:00:00Z');
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) {
-      return [];
-    }
-
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) return [];
     const current = new Date(start);
     while (current < end) {
       dates.push(current.toISOString().split('T')[0]);
@@ -158,28 +114,10 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   }, [checkInDate, checkOutDate]);
 
   const nights = stayDates.length;
+  const activeDay = stayDates.includes(selectedDayTab) ? selectedDayTab : (stayDates[0] || '');
+  const ALL_SOUP_AND_COMFORT_OPTIONS = useMemo(() => [...(SOUP_OPTIONS || []), ...(SPICED_COMFORT_OPTIONS || [])], []);
 
-  useEffect(() => {
-    if (nights <= 1) {
-      setBeddingBeddings('no');
-      setBeddingTowels('no');
-    }
-  }, [nights]);
-
-  const activeDay = useMemo(() => {
-    if (stayDates.includes(selectedDayTab)) return selectedDayTab;
-    return stayDates[0] || '';
-  }, [stayDates, selectedDayTab]);
-
-  const ALL_SOUP_AND_COMFORT_OPTIONS = useMemo(() => {
-    return [...(SOUP_OPTIONS || []), ...(SPICED_COMFORT_OPTIONS || [])];
-  }, []);
-
-  const toggleCustomDay = (
-    date: string,
-    selectedList: string[],
-    setSelectedList: React.Dispatch<React.SetStateAction<string[]>>
-  ) => {
+  const toggleCustomDay = (date: string, selectedList: string[], setSelectedList: React.Dispatch<React.SetStateAction<string[]>>) => {
     if (selectedList.includes(date)) {
       setSelectedList(selectedList.filter((d) => d !== date));
     } else {
@@ -187,29 +125,24 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
     }
   };
 
-  // Dynamic Total Calculation Engine
   const totals = useMemo(() => {
     const accommodation = listing.pricePerNight * nights;
     let diningTotal = 0;
 
     stayDates.forEach((date) => {
       const dayMeals = dailyMeals[date] || {};
-
       Object.entries(dayMeals).forEach(([mealId, data]) => {
         let basePricePerLiter = 0;
         Object.values(CULINARY_MEALS).forEach((category) => {
           const found = category.find((m) => m.id === mealId);
           if (found) basePricePerLiter = found.basePrice;
         });
-
         let proteinCost = 0;
         (data.proteins || []).forEach((item) => {
           const p = PROTEIN_OPTIONS.find((opt) => opt.id === item.id);
           if (p) proteinCost += p.price * item.qty;
         });
-
-        const cappedLiters = Math.min(data.liters, 10);
-        diningTotal += (basePricePerLiter * cappedLiters) + proteinCost;
+        diningTotal += basePricePerLiter * Math.min(data.liters, 10) + proteinCost;
       });
 
       const daySoups = dailySoups[date] || {};
@@ -221,77 +154,38 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
             const p = PROTEIN_OPTIONS.find((opt) => opt.id === item.id);
             if (p) proteinCost += p.price * item.qty;
           });
-
-          const cappedLiters = Math.min(data.liters, 10);
-          diningTotal += (soup.pricePerLiter * cappedLiters) + proteinCost;
+          diningTotal += soup.pricePerLiter * Math.min(data.liters, 10) + proteinCost;
         }
       });
     });
 
     let conciergeTotal = 0;
-
     if (airportTransferType !== 'none') {
-      let baseTransferFee = 0;
-      if (airportTransferType === 'sedan') baseTransferFee = 45000;
-      if (airportTransferType === 'suv') baseTransferFee = 85000;
-
-      if (airportTripDirection === 'round_trip') {
-        conciergeTotal += baseTransferFee * 2;
-      } else {
-        conciergeTotal += baseTransferFee;
-      }
+      const baseFee = airportTransferType === 'suv' ? 85000 : 45000;
+      conciergeTotal += airportTripDirection === 'round_trip' ? baseFee * 2 : baseFee;
     }
 
     if (chauffeurService !== 'none') {
-      let dailyChauffeurRate = 350000;
-      if (chauffeurService === 'sedan') dailyChauffeurRate = 350000;
-      if (chauffeurService === 'luxury_sedan') dailyChauffeurRate = 450000;
-      if (chauffeurService === 'commuter') dailyChauffeurRate = 250000;
-
-      const chauffeurDaysCount =
-        chauffeurDurationMode === 'entire_stay'
-          ? nights
-          : chauffeurSelectedDays.filter((d) => stayDates.includes(d)).length;
-
-      conciergeTotal += dailyChauffeurRate * chauffeurDaysCount;
+      const rate = chauffeurService === 'luxury_sedan' ? 450000 : chauffeurService === 'commuter' ? 250000 : 350000;
+      const days = chauffeurDurationMode === 'entire_stay' ? nights : chauffeurSelectedDays.filter((d) => stayDates.includes(d)).length;
+      conciergeTotal += rate * days;
     }
 
-    const cappedSec = Math.min(securityCount, 5);
     if (securityService !== 'none') {
-      let dailySecurityRate = 80000;
-      if (securityService === 'bodyguard') dailySecurityRate = 120000;
-      if (securityService === 'bouncer') dailySecurityRate = 200000;
-
-      const securityDaysCount =
-        securityDurationMode === 'entire_stay'
-          ? nights
-          : securitySelectedDays.filter((d) => stayDates.includes(d)).length;
-
-      conciergeTotal += dailySecurityRate * cappedSec * securityDaysCount;
+      const rate = securityService === 'bouncer' ? 200000 : securityService === 'bodyguard' ? 120000 : 80000;
+      const days = securityDurationMode === 'entire_stay' ? nights : securitySelectedDays.filter((d) => stayDates.includes(d)).length;
+      conciergeTotal += rate * Math.min(securityCount, 5) * days;
     }
 
-    const cappedShoppers = Math.min(shoppersCount, 5);
-    if (cappedShoppers > 0) {
-      const shopperDaysCount =
-        shoppersDurationMode === 'entire_stay'
-          ? nights
-          : shoppersSelectedDays.filter((d) => stayDates.includes(d)).length;
-
-      conciergeTotal += cappedShoppers * 15000 * shopperDaysCount;
+    if (shoppersCount > 0) {
+      const days = shoppersDurationMode === 'entire_stay' ? nights : shoppersSelectedDays.filter((d) => stayDates.includes(d)).length;
+      conciergeTotal += Math.min(shoppersCount, 5) * 15000 * days;
     }
 
-    const adultCount = parseInt(laundryAdult) || 0;
-    const kidCount = parseInt(laundryKid) || 0;
-    const suitCount = parseInt(laundrySuit) || 0;
-    conciergeTotal += adultCount * 1500 + kidCount * 1000 + suitCount * 5000;
+    conciergeTotal += (parseInt(laundryAdult) || 0) * 1500 + (parseInt(laundryKid) || 0) * 1000 + (parseInt(laundrySuit) || 0) * 5000;
 
     if (housekeepingActive === 'yes') {
-      if (housekeepingSchedule === 'daily') {
-        conciergeTotal += 25000 * nights;
-      } else {
-        const cleaningSessions = Math.max(1, Math.ceil(nights / 2));
-        conciergeTotal += 25000 * cleaningSessions;
-      }
+      conciergeTotal += housekeepingSchedule === 'daily' ? 25000 * nights : 25000 * Math.max(1, Math.ceil(nights / 2));
     }
 
     if (nights > 1) {
@@ -299,38 +193,13 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       if (beddingTowels === 'yes') conciergeTotal += 3000 * nights;
     }
 
-    return {
-      accommodation,
-      diningTotal,
-      conciergeTotal,
-      totalDue: accommodation + diningTotal + conciergeTotal,
-    };
+    return { accommodation, diningTotal, conciergeTotal, totalDue: accommodation + diningTotal + conciergeTotal };
   }, [
-    listing,
-    nights,
-    stayDates,
-    dailyMeals,
-    dailySoups,
-    ALL_SOUP_AND_COMFORT_OPTIONS,
-    airportTransferType,
-    airportTripDirection,
-    chauffeurService,
-    chauffeurDurationMode,
-    chauffeurSelectedDays,
-    securityService,
-    securityCount,
-    securityDurationMode,
-    securitySelectedDays,
-    shoppersCount,
-    shoppersDurationMode,
-    shoppersSelectedDays,
-    laundryAdult,
-    laundryKid,
-    laundrySuit,
-    housekeepingActive,
-    housekeepingSchedule,
-    beddingBeddings,
-    beddingTowels,
+    listing, nights, stayDates, dailyMeals, dailySoups, ALL_SOUP_AND_COMFORT_OPTIONS,
+    airportTransferType, airportTripDirection, chauffeurService, chauffeurDurationMode, chauffeurSelectedDays,
+    securityService, securityCount, securityDurationMode, securitySelectedDays, shoppersCount, shoppersDurationMode,
+    shoppersSelectedDays, laundryAdult, laundryKid, laundrySuit, housekeepingActive, housekeepingSchedule,
+    beddingBeddings, beddingTowels
   ]);
 
   const formatPrice = (amountInNGN: number) => {
@@ -342,138 +211,76 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
   const updateMealLiters = (date: string, id: string, liters: number) => {
     const dayMeals = dailyMeals[date] || {};
     const currentData = dayMeals[id] || { liters: 0, proteins: [] };
-    const cappedLiters = Math.min(10, Math.max(0, liters));
-
-    const updatedDayMeals = { ...dayMeals };
-    if (cappedLiters === 0) {
-      delete updatedDayMeals[id];
-    } else {
-      updatedDayMeals[id] = { ...currentData, liters: cappedLiters };
-    }
-
-    setDailyMeals({ ...dailyMeals, [date]: updatedDayMeals });
+    const capped = Math.min(10, Math.max(0, liters));
+    const updated = { ...dayMeals };
+    if (capped === 0) delete updated[id];
+    else updated[id] = { ...currentData, liters: capped };
+    setDailyMeals({ ...dailyMeals, [date]: updated });
   };
 
   const updateSoupLiters = (date: string, soupId: string, liters: number) => {
-    const cappedLiters = Math.min(10, Math.max(0, liters));
+    const capped = Math.min(10, Math.max(0, liters));
     const daySoups = dailySoups[date] || {};
     const current = daySoups[soupId] || { liters: 0, swallow: 'Amala', proteins: [] };
-    const updatedDaySoups = { ...daySoups };
-
-    if (cappedLiters === 0) {
-      delete updatedDaySoups[soupId];
-    } else {
-      updatedDaySoups[soupId] = { ...current, liters: cappedLiters, proteins: current.proteins || [] };
-    }
-
-    setDailySoups({ ...dailySoups, [date]: updatedDaySoups });
+    const updated = { ...daySoups };
+    if (capped === 0) delete updated[soupId];
+    else updated[soupId] = { ...current, liters: capped };
+    setDailySoups({ ...dailySoups, [date]: updated });
   };
 
   const toggleMealProtein = (date: string, mealId: string, proteinId: string) => {
     const dayMeals = dailyMeals[date] || {};
-    const currentData = dayMeals[mealId];
-    if (!currentData) return;
-
-    const existingIndex = currentData.proteins.findIndex((p) => p.id === proteinId);
-    let updatedProteins = [...currentData.proteins];
-
-    if (existingIndex > -1) {
-      updatedProteins = updatedProteins.filter((p) => p.id !== proteinId);
-    } else {
-      updatedProteins.push({ id: proteinId, qty: 1 });
-    }
-
-    setDailyMeals({
-      ...dailyMeals,
-      [date]: { ...dayMeals, [mealId]: { ...currentData, proteins: updatedProteins } },
-    });
+    const current = dayMeals[mealId];
+    if (!current) return;
+    const exists = current.proteins.some((p) => p.id === proteinId);
+    const updatedProteins = exists ? current.proteins.filter((p) => p.id !== proteinId) : [...current.proteins, { id: proteinId, qty: 1 }];
+    setDailyMeals({ ...dailyMeals, [date]: { ...dayMeals, [mealId]: { ...current, proteins: updatedProteins } } });
   };
 
   const updateMealProteinQty = (date: string, mealId: string, proteinId: string, qty: number) => {
     const dayMeals = dailyMeals[date] || {};
-    const currentData = dayMeals[mealId];
-    if (!currentData) return;
-
-    const updatedProteins = currentData.proteins.map((p) =>
-      p.id === proteinId ? { ...p, qty: Math.max(1, qty) } : p
-    );
-
-    setDailyMeals({
-      ...dailyMeals,
-      [date]: { ...dayMeals, [mealId]: { ...currentData, proteins: updatedProteins } },
-    });
+    const current = dayMeals[mealId];
+    if (!current) return;
+    const updatedProteins = current.proteins.map((p) => (p.id === proteinId ? { ...p, qty: Math.max(1, qty) } : p));
+    setDailyMeals({ ...dailyMeals, [date]: { ...dayMeals, [mealId]: { ...current, proteins: updatedProteins } } });
   };
 
   const toggleSoupProtein = (date: string, soupId: string, proteinId: string) => {
     const daySoups = dailySoups[date] || {};
-    const currentData = daySoups[soupId];
-    if (!currentData) return;
-
-    const currentProteins = currentData.proteins || [];
-    const existingIndex = currentProteins.findIndex((p) => p.id === proteinId);
-    let updatedProteins = [...currentProteins];
-
-    if (existingIndex > -1) {
-      updatedProteins = updatedProteins.filter((p) => p.id !== proteinId);
-    } else {
-      updatedProteins.push({ id: proteinId, qty: 1 });
-    }
-
-    setDailySoups({
-      ...dailySoups,
-      [date]: { ...daySoups, [soupId]: { ...currentData, proteins: updatedProteins } },
-    });
+    const current = daySoups[soupId];
+    if (!current) return;
+    const currentProt = current.proteins || [];
+    const exists = currentProt.some((p) => p.id === proteinId);
+    const updated = exists ? currentProt.filter((p) => p.id !== proteinId) : [...currentProt, { id: proteinId, qty: 1 }];
+    setDailySoups({ ...dailySoups, [date]: { ...daySoups, [soupId]: { ...current, proteins: updated } } });
   };
 
   const updateSoupProteinQty = (date: string, soupId: string, proteinId: string, qty: number) => {
     const daySoups = dailySoups[date] || {};
-    const currentData = daySoups[soupId];
-    if (!currentData) return;
-
-    const updatedProteins = (currentData.proteins || []).map((p) =>
-      p.id === proteinId ? { ...p, qty: Math.max(1, qty) } : p
-    );
-
-    setDailySoups({
-      ...dailySoups,
-      [date]: { ...daySoups, [soupId]: { ...currentData, proteins: updatedProteins } },
-    });
+    const current = daySoups[soupId];
+    if (!current) return;
+    const updated = (current.proteins || []).map((p) => (p.id === proteinId ? { ...p, qty: Math.max(1, qty) } : p));
+    setDailySoups({ ...dailySoups, [date]: { ...daySoups, [soupId]: { ...current, proteins: updated } } });
   };
 
-  // Quickteller Payment & Local Storage Sync Handler
+  // Paystack Payment Handler
   const handlePaymentSubmission = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
 
-    if (!checkInDate || !checkOutDate) {
-      alert('Please select your check-in and check-out dates.');
+    if (!checkInDate || !checkOutDate || !fullName || !email || !phone) {
+      alert('Please fill in your dates and contact details.');
       return;
     }
 
-    if (!fullName || !email || !phone) {
-      alert('Please fill in your Full Name, Email Address, and Phone Number before proceeding.');
-      return;
-    }
-
-    if (nights < 1) {
-      alert('Check-out date must be after check-in date.');
-      return;
-    }
-
-    const testCode = new URLSearchParams(window.location.search).get('testcode') || '';
-    const isTest = !!testCode;
-    // In protected test mode the guest is charged exactly ₦100 (10,000 kobo); the server enforces this too.
-    const amountKobo = isTest ? 10000 : Math.round(Number(totals.totalDue) * 100);
+    const amountKobo = Math.round(Number(totals.totalDue) * 100);
     if (!Number.isFinite(amountKobo) || amountKobo <= 0) {
-      console.error('Invalid total, totals =', totals);
-      alert('There is a problem with your total. Please review your selections.');
+      alert('Invalid total amount.');
       return;
     }
 
     setSubmitting(true);
-
-    const uniqueTxRef =
-      'CS_' + Date.now() + '_' + Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+    const uniqueTxRef = 'PSTK_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
 
     let formattedAirportTransfer = 'None';
     if (airportTransferType !== 'none') {
@@ -529,12 +336,11 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       diningTotal: totals.diningTotal,
       conciergeTotal: totals.conciergeTotal,
       servicesTotal: totals.diningTotal + totals.conciergeTotal,
-      // exactly what the gateway is asked to charge (whole kobo), so server verification can match it
-      grandTotal: isTest ? totals.totalDue : amountKobo / 100,
-      currency: 'NGN', // the currency actually charged
-      displayCurrency: currency, // what the guest was viewing
+      grandTotal: totals.totalDue,
+      currency: 'NGN',
+      displayCurrency: currency,
       createdAt: new Date().toISOString(),
-      status: 'Pending', // becomes confirmed only after server-side verification
+      status: 'Pending',
       guestInfo: { fullName, email, phone, guests },
       dailyMealSelections: { meals: dailyMeals, soups: dailySoups },
       addons: {
@@ -552,81 +358,58 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
       },
     };
 
-    // Draft only: the success page reads this, verifies the payment on the server,
-    // and only then marks the booking as confirmed.
     localStorage.setItem('booking_confirmation_payload', JSON.stringify(payload));
 
-    const merchantCode = process.env.NEXT_PUBLIC_QUICKTELLER_MERCHANT_CODE;
-    const payItemId = process.env.NEXT_PUBLIC_QUICKTELLER_PAY_ITEM_ID;
-
-    if (!merchantCode || !payItemId) {
-      alert('Payment is not configured. Please contact support.');
-      console.error('Missing NEXT_PUBLIC_QUICKTELLER_MERCHANT_CODE or NEXT_PUBLIC_QUICKTELLER_PAY_ITEM_ID');
-      setSubmitting(false);
-      return;
-    }
-
-    // Store a PENDING booking on the server first. Payment is later matched to it by reference,
-    // so a paid guest is never lost even if their browser/tab closes after paying.
     try {
       const initRes = await fetch('/api/bookings/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'initiate', transactionRef: uniqueTxRef, bookingData: payload, testCode: isTest ? testCode : undefined }),
+        body: JSON.stringify({ action: 'initiate', transactionRef: uniqueTxRef, bookingData: payload }),
       });
       if (!initRes.ok) {
-        const err = await initRes.json().catch(() => ({}));
-        console.error('Could not start booking:', err);
-        alert('We could not start your booking. Please try again.');
+        alert('Could not initiate booking on server.');
         setSubmitting(false);
         return;
       }
     } catch (err) {
-      console.error('Could not start booking:', err);
-      alert('Network problem. Please check your connection and try again.');
+      console.error(err);
+      alert('Network error.');
       setSubmitting(false);
       return;
     }
 
-    // Web Redirect: post a hidden form to Interswitch's hosted payment page.
-    // After payment they send the guest back to site_redirect_url with
-    // ?txnref=...&amount=...&resp=00&desc=... (because payment_response_type = GET).
-    const fields: Record<string, string> = {
-      merchant_code: merchantCode,
-      pay_item_id: payItemId,
-      txn_ref: uniqueTxRef,
-      amount: String(amountKobo), // kobo, whole number
-      currency: '566', // NGN
-      cust_id: email,
-      cust_email: email,
-      cust_name: fullName,
-      // cust_mobile_no intentionally NOT sent: Interswitch validates it against the NGN
-      // country and rejects foreign or oddly formatted numbers. We keep the phone in our own booking data.
-      site_redirect_url: `${window.location.origin}/booking-success`,
-      payment_response_type: 'GET',
-    };
+    const paystackPublicKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY;
+    if (!paystackPublicKey) {
+      alert('Paystack public key missing.');
+      setSubmitting(false);
+      return;
+    }
 
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = QT_PAY_URL;
-    Object.entries(fields).forEach(([name, value]) => {
-      const input = document.createElement('input');
-      input.type = 'hidden';
-      input.name = name;
-      input.value = value;
-      form.appendChild(input);
-    });
-    document.body.appendChild(form);
-    form.submit();
+    // Load Paystack Inline Script dynamically
+    const script = document.createElement('script');
+    script.src = 'https://js.paystack.co/v1/inline.js';
+    script.async = true;
+    script.onload = () => {
+      const handler = (window as any).PaystackPop.setup({
+        key: paystackPublicKey,
+        email: email,
+        amount: amountKobo,
+        currency: 'NGN',
+        ref: uniqueTxRef,
+        callback: function (response: { reference: string }) {
+          router.push(`/booking-success?reference=${response.reference}`);
+        },
+        onClose: function () {
+          setSubmitting(false);
+        },
+      });
+      handler.openIframe();
+    };
+    document.body.appendChild(script);
   };
 
   return (
     <div className="min-h-screen bg-[#060b13] text-slate-100 font-sans p-4 md:p-8">
-      {testMode && (
-        <div className="mb-4 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-center text-xs font-mono text-rose-300">
-          TEST MODE: this checkout will charge only ₦100. Remove ?testcode from the URL for a normal booking.
-        </div>
-      )}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <Link
           href={`/listings/${resolvedParams.id}`}
@@ -1573,8 +1356,8 @@ export default function CheckoutPage({ params }: CheckoutPageProps) {
               className="w-full mt-4 bg-yellow-500 hover:bg-cyan-400 text-slate-950 font-bold py-4 rounded-xl transition-all shadow-lg shadow-cyan-500/10 uppercase tracking-wider text-xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {submitting
-                ? 'Redirecting to payment...'
-                : `Checkout (${testMode ? '₦100 TEST' : formatPrice(totals.totalDue)})`}
+                ? 'Opening Paystack...'
+                : `Pay with Paystack (${formatPrice(totals.totalDue)})`}
             </button>
           </form>
         </div>

@@ -267,7 +267,7 @@ export async function sendConfirmationEmail(b: any) {
     const checkOutLabel = formatStayDate(b.checkOut);
     const customerName = String(b.customerName || '').trim() || 'Valued Guest';
 
-    await resend.emails.send({
+    const sent = await resend.emails.send({
       // Until your domain is verified in Resend, use onboarding@resend.dev
       // (it can only deliver to your own Resend account email).
       from: process.env.RESEND_FROM_EMAIL || 'Concierge Stay <onboarding@resend.dev>',
@@ -295,6 +295,8 @@ export async function sendConfirmationEmail(b: any) {
           <p style="font-size:16px;color:#fbbf24;"><strong>Total Paid: ₦${Number(b.grandTotal).toLocaleString()}</strong></p>
         </div>`,
     });
+    // Resend reports API failures in the returned `error` instead of throwing, so check it.
+    if ((sent as any)?.error) console.error('[Resend email error]:', (sent as any).error);
   } catch (emailError) {
     console.error('[Resend email error]:', emailError);
   }
