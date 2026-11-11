@@ -1,6 +1,6 @@
 // ====================================================================
 // FILE: src/app/layout.tsx
-// Root layout integrated with Google Tag (GTM-54DHZS8K), metadata, and theme provider
+// Root layout integrated with Google Tag Manager (GTM-54DHZS8K)
 // ====================================================================
 
 import type { Metadata, Viewport } from "next";
@@ -102,21 +102,32 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <head>
-        {/* Google Tag Manager / GA4 */}
+        {/* Google Tag Manager Header Script */}
         <Script
-          src="https://www.googletagmanager.com/gtm.js?id=GTM-54DHZS8K"
+          id="google-tag-manager"
           strategy="afterInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+              new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+              j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+              'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+              })(window,document,'script','dataLayer','GTM-54DHZS8K');
+            `,
+          }}
         />
-        <Script id="google-tag-init" strategy="afterInteractive">
-          {`
-            window.dataLayer = window.dataLayer || [];
-            function gtag(){dataLayer.push(arguments);}
-            gtag('js', new Date());
-            gtag('config', 'GTM-54DHZS8K');
-          `}
-        </Script>
       </head>
       <body className="min-h-full flex flex-col bg-slate-950 text-slate-100 font-sans selection:bg-rose-500 selection:text-white">
+        {/* Google Tag Manager (noscript fallback) */}
+        <noscript>
+          <iframe
+            src="https://www.googletagmanager.com/ns.html?id=GTM-54DHZS8K"
+            height="0"
+            width="0"
+            style={{ display: 'none', visibility: 'hidden' }}
+          />
+        </noscript>
+
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
